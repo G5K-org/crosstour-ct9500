@@ -90,6 +90,9 @@ MAIN_APP_PATCHES = [
 ]
 
 
+# Kategorie-Navigation (src/menucat.c) - deaktiviert, siehe dort
+MENU_CATEGORIES = False
+
 # Neue Menüzeilen (Einstellungen): Sprachindex -> (Deutsch, Englisch/sonst)
 MENU_ROWS = {470: ("WLAN-Autostart", "WiFi autostart"),
              471: ("Heimnetz", "Home network"),
@@ -99,7 +102,16 @@ MENU_ROWS = {470: ("WLAN-Autostart", "WiFi autostart"),
              474: ("Speicher", "Storage"),
              475: ("PC-Kamera", "PC camera"),
              476: ("Laden", "Charge"),
-             477: ("Debug", "Debug")}
+             477: ("Debug", "Debug"),
+             # Einstellungen mit Kategorien (src/menucat.c)
+             478: ("Einstellungen", "Settings"),
+             479: ("Video", "Video"),
+             480: ("Foto", "Photo"),
+             481: ("Bild", "Image"),
+             482: ("Ton & Anzeige", "Sound & Display"),
+             483: ("Verbindungen", "Connections"),
+             484: ("System", "System"),
+             485: ("Speicher", "Storage")}
 
 
 def patch_main_app(img):
@@ -123,10 +135,16 @@ def patch_higv(img):
     stock = os.path.join(ROOT, "firmware/fs/appfs/bin/higv.bin")
     TELNET_ICON = (0x21A, 0x219, 0x219)   # Skins md_no_select/md_select (unbenutzt) -> Terminal-Icon
     USB_ICON = (0x228, 0x227, 0x227)      # Skins hdr_no_select/hdr_select (unbenutzt) -> USB-Icon
+    ic = lambda n: higv_addrows.icon_of(stock, n)
+    cats = [(479, ic("resolution")), (480, ic("photosize")), (481, ic("expose")), (482, ic("audio_mute")),
+            (483, higv_addrows.WIFI_ICON), (484, ic("ldc")), (485, ic("sd_format"))]
     new, handles = higv_addrows.add_rows(stock, [(470, higv_addrows.WIFI_ICON), (471, higv_addrows.WIFI_ICON),
-                                                 (472, TELNET_ICON), (473, USB_ICON)])
-    assert handles == [(1121, 1122, 1123), (1124, 1125, 1126), (1127, 1128, 1129),
-                       (1130, 1131, 1132)], handles  # wie in src/menuhook.S
+                                                 (472, TELNET_ICON), (473, USB_ICON)]
+                                         + (cats if MENU_CATEGORIES else []))
+    assert handles[:4] == [(1121, 1122, 1123), (1124, 1125, 1126), (1127, 1128, 1129),
+                           (1130, 1131, 1132)], handles  # wie in src/menuhook.S
+    if MENU_CATEGORIES:
+        assert handles[4:] == [(1133 + 3 * i, 1134 + 3 * i, 1135 + 3 * i) for i in range(7)], handles  # src/menucat.c
     import higv_theme
     new, fchg = higv_theme.bitmap_fonts_to_vector(new)
     new, ncol = higv_theme.recolor(new, {higv_theme.accent_argb(higv_theme.OLD_ACCENT): higv_theme.accent_argb(higv_theme.NEW_ACCENT)})

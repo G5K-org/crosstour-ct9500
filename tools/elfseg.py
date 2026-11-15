@@ -66,12 +66,26 @@ def va2off(d, va):
     raise ValueError(hex(va))
 
 
+CSRC = [os.path.join(ROOT, "src/menucat.c"), os.path.join(ROOT, "src/crash.c")]
+CFLAGS = ["-O2", "-mcpu=cortex-a7", "-marm", "-mfloat-abi=soft", "-ffreestanding", "-fno-builtin",
+          "-fno-pic", "-fno-common", "-fno-zero-initialized-in-bss", "-fno-stack-protector",
+          "-fno-unwind-tables", "-fno-asynchronous-unwind-tables", "-Wall", "-Werror"]
+
+
 def build_blob():
     with tempfile.TemporaryDirectory() as t:
         o, e, b = os.path.join(t, "h.o"), os.path.join(t, "h.elf"), os.path.join(t, "h.bin")
         subprocess.run([TC + "gcc", "-c", "-mcpu=cortex-a7", "-marm", "-o", o, SRC], check=True)
-        subprocess.run([TC + "ld", "-Ttext", hex(SEG_VA), "-N", "-o", e, o], check=True)
-        subprocess.run([TC + "objcopy", "-O", "binary", "-j", ".text", e, b], check=True)
+        objs = [o]
+        for c in CSRC:      # C-Teile: freistehend, alles in .text/.rodata/.data (kein .bss)
+            co = os.path.join(t, os.path.basename(c) + ".o")
+            subprocess.run([TC + "gcc", "-c", *CFLAGS, "-o", co, c], check=True)
+            objs.append(co)
+        subprocess.run([TC + "ld", "-Ttext", hex(SEG_VA), "-N", "-o", e, *objs], check=True)
+        hdr = subprocess.run([TC + "objdump", "-h", e], capture_output=True, text=True, check=True).stdout
+        if re.search(r"\.bss\s+0*[1-9a-f]", hdr):
+            raise SystemExit("elfseg: .bss im Segment - Variablen initialisieren")
+        subprocess.run([TC + "objcopy", "-O", "binary", "-j", ".text", "-j", ".rodata", "-j", ".data", e, b], check=True)
         syms = {}
         for line in subprocess.run([TC + "nm", e], capture_output=True, text=True, check=True).stdout.splitlines():
             p = line.split()

@@ -357,12 +357,25 @@ hook_clickkey:
     str     r3, [r0, #4]
 9:  b       NET_PUBLISH
 
+@ ---------------------------------------------------------------- Absturz-Rekorder (src/crash.c)
+@ Signal-Handler-Einsprung: beim Eintritt zeigt sp auf den Signal-Frame des Kernels.
+    .global crash_sig
+crash_sig:
+    mov     r1, r0                  @ Signalnummer
+    mov     r0, sp                  @ struct sigframe
+    push    {r4, lr}
+    bl      crash_dump
+    pop     {r4, pc}
+
 @ ---------------------------------------------------------------- Handler-Tabelle Eintrag 55
 hook_onshow:
     push    {r4, lr}
     bl      ORIG_ONSHOW             @ Original mit unveränderten r0-r2
     mov     r4, r0
     bl      refresh_all
+    bl      crash_install           @ src/crash.c: Absturz-Rekorder (einmalig)
+    @ bl    menucat_show            @ src/menucat.c (deaktiviert: Scroll-Ansicht zeichnet verschobene
+    @                               @ Zeilen nicht neu, Original setzt den Fokus zurück; siehe menucat.c)
     mov     r0, r4
     pop     {r4, pc}
 

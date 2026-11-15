@@ -32,7 +32,7 @@ SETTINGS = {
     "dng": ("T:RAW", ORANGE),
     "expose": ("exposure", GREEN), "iso": ("T:ISO", GREEN), "wb": ("T:WB", GREEN),
     "scene": ("mountain", GREEN), "rotation": ("rotate-clockwise", GREEN),
-    "wdr": ("contrast", GREEN), "ldc": ("aperture", GREEN), "frequency": ("wave-sine", TEAL),
+    "wdr": ("contrast", GREEN), "ldc": ("settings", GRAY),   # ldc unbenutzt -> Kategorie System "frequency": ("wave-sine", TEAL),
     # unbenutzte Original-Skins, für die Mod-Zeilen umgewidmet (tools/build.py patch_higv)
     "md": ("terminal-2", GRAY), "hdr": ("usb", TEAL),
     "audio_mute": ("microphone", PINK), "keytone": ("volume", PINK), "voice": ("volume", PINK),

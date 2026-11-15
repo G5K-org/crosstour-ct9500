@@ -24,6 +24,29 @@ ROW_STEP = 40
 WIFI_ICON = (0x210, 0x20F, 0x20F)  # Icons aus Zeile "WLAN"
 
 
+def skin_by_file(src, fname):
+    """Skin-ID eines Bild-Skins anhand des Dateinamens (z. B. "wifi_select.png")."""
+    g = Higv(src)
+    d = g.d
+    h = struct.unpack_from("<12I", d, 0x54)
+    po, ps = BASE + h[8], h[9]
+    pool = bytes(d[po:po + ps])
+    o, sz = BASE + h[2], h[3]
+    for i in range(sz // 56):
+        r = struct.unpack_from("<14I", d, o + 56 * i)
+        if r[1] == 1:
+            e = pool.find(b"\0", r[10])
+            if pool[r[10]:e].decode(errors="replace").endswith("/" + fname):
+                return r[0]
+    raise KeyError(fname)
+
+
+def icon_of(src, name):
+    """(normal, aktiv, aktiv) für <name>_no_select.png / <name>_select.png"""
+    a = skin_by_file(src, name + "_select.png")
+    return (skin_by_file(src, name + "_no_select.png"), a, a)
+
+
 def add_rows(src, rows):
     """rows: Liste von (lang_index, icon_tuple oder None). Gibt (bytes, [(btn, label, value)]) zurück."""
     g = Higv(src)

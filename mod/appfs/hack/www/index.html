@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CT9500</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--fg:#1c1e21;--mut:#65676b;--acc:#0a66c2;--red:#d93025;--ok:#188038;--bd:#dadce0}
+@media (prefers-color-scheme:dark){:root{--bg:#18191a;--card:#242526;--fg:#e4e6eb;--mut:#b0b3b8;--acc:#4f9cf9;--red:#f28b82;--ok:#81c995;--bd:#3e4042}}
+*{box-sizing:border-box}body{margin:0;font:15px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+header{padding:14px 16px;background:var(--card);border-bottom:1px solid var(--bd);position:sticky;top:0;z-index:2}
+header h1{margin:0;font-size:18px}header small{color:var(--mut)}
+main{max-width:720px;margin:0 auto;padding:12px 16px 40px}
+section{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px;margin:12px 0}
+h2{font-size:16px;margin:0 0 10px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+button{font:inherit;padding:10px 14px;border-radius:8px;border:1px solid var(--bd);background:var(--card);color:var(--fg);cursor:pointer}
+button.p{background:var(--acc);border-color:var(--acc);color:#fff}button.r{background:var(--red);border-color:var(--red);color:#fff}
+button:disabled{opacity:.5}
+label{display:block;margin:8px 0 2px;color:var(--mut);font-size:13px}
+input,select{font:inherit;width:100%;padding:9px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px 12px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;font-size:14px}.kv b{color:var(--mut);font-weight:500}
+.msg{margin-top:8px;font-size:14px}.msg.e{color:var(--red)}.msg.o{color:var(--ok)}
+.rec{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--red);margin-right:6px;animation:b 1s infinite}
+@keyframes b{50%{opacity:.2}}
+ul.files{list-style:none;padding:0;margin:0;max-height:300px;overflow:auto;font-size:14px}ul.files li{padding:4px 0;border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;gap:8px}
+a{color:var(--acc)}pre{white-space:pre-wrap;font-size:12px;max-height:240px;overflow:auto;background:var(--bg);padding:8px;border-radius:6px}
+progress{width:100%}
+</style>
+</head>
+<body>
+<header><h1>CT9500</h1><small id="hdr">verbinde …</small></header>
+<main>
+
+<section>
+  <h2>Kamera</h2>
+  <div class="kv" id="camstate"></div>
+  <div class="row" style="margin-top:10px">
+    <button class="r" id="btnRec">● Aufnahme</button>
+    <button id="btnPhoto">📷 Foto</button>
+    <select id="mode" style="width:auto;flex:1"></select>
+  </div>
+  <div class="msg" id="camMsg"></div>
+</section>
+
+<section>
+  <h2>Live-Vorschau</h2>
+  <video id="live" muted playsinline style="width:100%;aspect-ratio:16/9;background:#000;border-radius:8px;display:block"></video>
+  <div class="row" style="margin-top:10px"><button class="p" id="btnLive">▶ Vorschau starten</button><small id="liveInfo" style="color:var(--mut)"></small></div>
+  <label>RTSP-Link (z. B. für VLC: Medien → Netzwerkstream öffnen)</label>
+  <div class="row"><input id="rtspUrl" readonly style="flex:1;width:auto"><button id="btnCopy">Kopieren</button></div>
+</section>
+
+<section>
+  <h2>Einstellungen</h2>
+  <div class="grid" id="settings"></div>
+  <div class="row" style="margin-top:10px"><button id="btnTime">Uhrzeit vom Gerät übernehmen</button></div>
+  <div class="msg" id="setMsg"></div>
+</section>
+
+<section>
+  <h2>Dateien</h2>
+  <ul class="files" id="files"></ul>
+</section>
+
+<section>
+  <h2>WLAN</h2>
+  <div class="kv" id="wifistate"></div>
+  <label>Modus</label>
+  <select id="wMode">
+    <option value="auto">Heimnetz, sonst Zugangspunkt</option>
+    <option value="sta">Nur Heimnetz</option>
+    <option value="ap">Nur Zugangspunkt (Kamera-WLAN)</option>
+  </select>
+  <label>Heimnetz: Name (SSID)</label><input id="wSsid" autocomplete="off">
+  <label>Heimnetz: Passwort</label><input id="wPsk" type="password" placeholder="unverändert" autocomplete="new-password">
+  <label>Wartezeit auf Heimnetz (Sekunden)</label><input id="wTo" type="number" min="5" max="120">
+  <label>Kamera-WLAN: Name (leer = Standard)</label><input id="wApSsid" autocomplete="off">
+  <label>Kamera-WLAN: neues Passwort (leer = unverändert)</label><input id="wApPsk" type="password" autocomplete="new-password">
+  <div class="row" style="margin-top:10px"><button class="p" id="btnWifi">Speichern</button></div>
+  <div class="msg" id="wifiMsg"></div>
+</section>
+
+<section>
+  <h2>Firmware-Update</h2>
+  <div class="kv" id="fwstate"></div>
+  <label>Update-Paket (.tar)</label><input type="file" id="otaFile" accept=".tar">
+  <progress id="otaProg" value="0" max="100" hidden></progress>
+  <div class="row" style="margin-top:10px"><button class="p" id="btnOta">Installieren</button></div>
+  <div class="msg" id="otaMsg"></div>
+</section>
+
+<section>
+  <h2>System</h2>
+  <label><input type="checkbox" id="sTelnet" style="width:auto"> Telnet (Port 23, ohne Passwort)</label>
+  <label><input type="checkbox" id="sNtp" style="width:auto"> Uhrzeit im Heimnetz per Internet stellen</label>
+  <label><input type="checkbox" id="sAuto" style="width:auto"> WLAN beim Einschalten automatisch an</label>
+  <label>Passwort für diese Seite (Benutzer „admin“, leer = keins)</label><input id="sPass" type="password" placeholder="unverändert" autocomplete="new-password">
+  <div class="row" style="margin-top:10px"><button class="p" id="btnSys">Speichern</button><button id="btnReboot">Neustart</button><button id="btnLog">Protokoll</button></div>
+  <div class="msg" id="sysMsg"></div>
+  <pre id="log" hidden></pre>
+</section>
+
+</main>
+<script src="jmuxer.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const api = (q, opt) => fetch('/cgi-bin/api?' + q, opt);
+const cam = async (c, params = '-act=get') => (await api('a=cam&c=' + c + '&' + params)).text();
+const parse = t => Object.fromEntries([...t.matchAll(/var (\w+)="([^"]*)"/g)].map(m => [m[1], m[2]]));
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const kv = (el, obj) => el.innerHTML = Object.entries(obj).map(([k, v]) => `<b>${esc(k)}</b><span>${v}</span>`).join('');
+const msg = (el, t, ok) => { $(el).textContent = t; $(el).className = 'msg ' + (ok ? 'o' : 'e'); };
+const form = obj => new URLSearchParams(obj).toString();
+const MODES = {NormalVideo:'Video', 'Loop Video':'Loop-Video', VideoLapse:'Zeitraffer-Video', SlowRec:'Zeitlupe',
+               NormalPhoto:'Foto', TimerPhoto:'Selbstauslöser', Burst:'Serienbild'};
+let st = {}, curMode = '', recording = false;
+
+async function postJson(q, body, el) {
+  try {
+    const r = await api(q, {method: 'POST', body, headers: {'Content-Type': 'application/x-www-form-urlencoded'}});
+    const j = await r.json();
+    msg(el, j.ok ? (j.hint || 'Gespeichert.') : j.error, j.ok);
+    return j;
+  } catch (e) { msg(el, 'Fehler: ' + e, false); }
+}
+
+async function refreshStatus() {
+  try { st = await (await api('a=status')).json(); } catch { $('hdr').textContent = 'keine Verbindung'; return; }
+  const ws = {ap: 'Kamera-WLAN', sta: 'Heimnetz', connecting: 'verbinde …', off: 'aus'}[st.wifi_state] || st.wifi_state || '–';
+  $('hdr').textContent = `Mod ${st.mod} · WLAN: ${ws}${st.sta_ip ? ' · ' + st.sta_ip : ''} · ${st.time}`;
+  kv($('wifistate'), {Status: esc(ws), 'IP im Heimnetz': esc(st.sta_ip || '–'),
+      'SD-Datei wifi.conf': st.sd_override ? 'vorhanden (hat Vorrang!)' : 'keine'});
+  kv($('fwstate'), {'Mod-Version': esc(st.mod), Versionscode: esc(st.swver)});
+  if (!$('wSsid').matches(':focus')) {
+    $('wMode').value = st.wifi_mode; $('wSsid').value = st.sta_ssid; $('wTo').value = st.sta_timeout;
+    $('wApSsid').value = st.ap_ssid; $('wPsk').placeholder = st.sta_psk_set ? 'unverändert' : 'kein Passwort';
+    $('sTelnet').checked = st.telnet === '1'; $('sNtp').checked = st.ntp === '1'; $('sAuto').checked = st.wifi_autostart === '1';
+    $('sPass').placeholder = st.web_pass_set ? 'unverändert' : 'kein Passwort';
+  }
+}
+
+async function refreshCam() {
+  const ws = parse(await cam('getworkstate')), cm = parse(await cam('getcurworkmode'));
+  const sd = parse(await cam('getsdstate')), cnt = parse(await cam('getfiletypecount'));
+  recording = ws.running === 'true';
+  curMode = cm.workmode;
+  kv($('camstate'), {
+    Status: recording ? `<span class="rec"></span>Aufnahme ${esc(ws.time || '')} s` : 'bereit',
+    Modus: esc(MODES[curMode] || curMode),
+    'SD-Karte': esc(`${sd.sdstate} · ${sd.used} von ${sd.total}`),
+    Dateien: esc(`${cnt.videocount} Videos, ${cnt.imagecount} Fotos`)});
+  $('btnRec').textContent = recording ? '■ Stopp' : '● Aufnahme';
+  if ($('mode').value !== curMode) $('mode').value = curMode;
+}
+
+async function loadModes() {
+  const all = parse(await cam('getallworkmode'));
+  const modes = [...(all.video || '').split(','), ...(all.photo || '').split(',')].filter(Boolean);
+  $('mode').innerHTML = modes.map(m => `<option value="${esc(m)}">${esc(MODES[m] || m)}</option>`).join('');
+}
+
+async function loadSettings() {
+  const box = $('settings'); box.innerHTML = '';
+  for (const wm of [curMode, 'System']) {
+    const p = parse(await cam('getprimarymenuitem', '-act=get&-workmode=' + encodeURIComponent(wm)));
+    for (const name of (p.item || '').split(',').filter(Boolean)) {
+      const s = parse(await cam('getsecondmenuitem', `-act=get&-workmode=${encodeURIComponent(wm)}&-name=${encodeURIComponent(name)}`));
+      const opts = (s.item || '').split(',').filter(Boolean);
+      if (opts.length < 2 || ['Factory Reset', 'SD Format', 'Wi-Fi', 'Information'].includes(name)) continue;
+      const d = document.createElement('div');
+      d.innerHTML = `<label>${esc(name)}</label><select>${opts.map(o => `<option${o === s.value ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
+      d.querySelector('select').onchange = async e => {
+        const r = await cam('setcurparameter', `-act=set&-workmode=${encodeURIComponent(wm)}&-name=${encodeURIComponent(name)}&-value=${encodeURIComponent(e.target.value)}`);
+        msg('setMsg', r.includes('Success') ? `${name}: ${e.target.value}` : 'Fehler: ' + r, r.includes('Success'));
+      };
+      box.appendChild(d);
+    }
+  }
+}
+
+async function loadFiles() {
+  const t = await (await api('a=files')).text();
+  const rows = t.trim().split('\n').filter(Boolean).reverse();
+  $('files').innerHTML = rows.map(r => {
+    const [path, size] = r.split('\t');
+    const url = `http://${location.hostname}/sd/${path}`;
+    return `<li><a href="${esc(url)}" download>${esc(path.split('/').pop())}</a><span>${(size / 1048576).toFixed(1)} MB</span></li>`;
+  }).join('') || '<li>keine Dateien</li>';
+}
+
+$('btnRec').onclick = async () => {
+  const r = await cam('workmodecmd', '-act=set&-cmd=' + (recording ? 'stop' : 'start'));
+  msg('camMsg', r.trim(), r.includes('Success')); setTimeout(refreshCam, 800); setTimeout(loadFiles, 1500);
+};
+$('btnPhoto').onclick = async () => {
+  const back = curMode, photo = ['NormalPhoto', 'TimerPhoto', 'Burst'].includes(curMode);
+  if (!photo) { await cam('setcurworkmode', '-act=set&-workmode=NormalPhoto'); await new Promise(r => setTimeout(r, 1500)); }
+  const r = await cam('workmodecmd', '-act=set&-cmd=start');
+  msg('camMsg', r.includes('Success') ? 'Foto aufgenommen' : r, r.includes('Success'));
+  if (!photo) { await new Promise(r => setTimeout(r, 2000)); await cam('setcurworkmode', '-act=set&-workmode=' + encodeURIComponent(back)); }
+  setTimeout(loadFiles, 1000);
+};
+$('mode').onchange = async e => {
+  const r = await cam('setcurworkmode', '-act=set&-workmode=' + encodeURIComponent(e.target.value));
+  msg('camMsg', r.trim(), r.includes('Success')); await refreshCam(); loadSettings();
+};
+$('btnTime').onclick = async () => {
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  const t = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  const r = await cam('setsystime', '-act=set&-time=' + t);
+  msg('setMsg', r.includes('Success') ? 'Uhrzeit gestellt' : r, r.includes('Success')); refreshStatus();
+};
+$('btnWifi').onclick = () => postJson('a=wifi', form({mode: $('wMode').value, ssid: $('wSsid').value,
+  psk: $('wPsk').value, psk_keep: $('wPsk').value ? 0 : (st.sta_psk_set && $('wSsid').value === st.sta_ssid ? 1 : 0),
+  ap_ssid: $('wApSsid').value, ap_psk: $('wApPsk').value, timeout: $('wTo').value}), 'wifiMsg').then(refreshStatus);
+$('btnSys').onclick = () => postJson('a=system', form({telnet: $('sTelnet').checked ? 1 : 0, ntp: $('sNtp').checked ? 1 : 0, wifi_autostart: $('sAuto').checked ? 1 : 0,
+  web_pass: $('sPass').value, web_pass_change: $('sPass').value ? 1 : 0}), 'sysMsg');
+$('btnReboot').onclick = () => confirm('Kamera neu starten?') && postJson('a=reboot', '', 'sysMsg');
+$('btnLog').onclick = async () => { $('log').hidden = false; $('log').textContent = await (await api('a=log')).text(); };
+$('btnOta').onclick = () => {
+  const f = $('otaFile').files[0];
+  if (!f) return msg('otaMsg', 'Bitte ein Update-Paket wählen.', false);
+  if (!confirm(`${f.name} installieren? Die Kamera startet danach neu und flasht.`)) return;
+  const x = new XMLHttpRequest();
+  x.open('POST', '/cgi-bin/api?a=ota');
+  $('otaProg').hidden = false; $('btnOta').disabled = true;
+  x.upload.onprogress = e => $('otaProg').value = e.loaded / e.total * 100;
+  x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch {}
+    msg('otaMsg', j.ok ? j.hint : (j.error || x.responseText), j.ok); $('btnOta').disabled = false; };
+  x.onerror = () => { msg('otaMsg', 'Übertragung fehlgeschlagen', false); $('btnOta').disabled = false; };
+  x.send(f);
+};
+
+// ---------- Live-Vorschau ----------
+const RTSP = `rtsp://${location.hostname}/livestream/12`;
+$('rtspUrl').value = RTSP;
+$('btnCopy').onclick = async () => {
+  try { await navigator.clipboard.writeText(RTSP); }
+  catch { $('rtspUrl').select(); document.execCommand('copy'); }   // http:// ist kein "secure context"
+  $('btnCopy').textContent = 'Kopiert ✓'; setTimeout(() => $('btnCopy').textContent = 'Kopieren', 1500);
+};
+let live = null;
+async function startLive() {
+  if (!window.JMuxer || !(window.MediaSource || window.ManagedMediaSource)) {
+    $('liveInfo').textContent = 'Dieser Browser kann die Vorschau nicht abspielen – bitte den RTSP-Link nutzen.'; return;
+  }
+  const ctrl = new AbortController(), video = $('live');
+  const jm = new JMuxer({node: video, mode: 'video', fps: 30, flushingTime: 0, live: true, debug: false});
+  live = {ctrl, jm, bytes: 0, t0: Date.now()};
+  $('btnLive').textContent = '■ Vorschau stoppen'; $('liveInfo').textContent = 'verbinde …';
+  const timer = setInterval(() => {   // nah am Live-Rand bleiben (sonst wächst die Verzögerung)
+    const b = video.buffered;
+    if (b.length && b.end(b.length - 1) - video.currentTime > 0.6) video.currentTime = b.end(b.length - 1) - 0.1;
+    if (live) $('liveInfo').textContent = `${(live.bytes * 8 / 1e6 / ((Date.now() - live.t0) / 1000)).toFixed(1)} Mbit/s`;
+  }, 1000);
+  live.timer = timer;
+  try {
+    const r = await fetch('/cgi-bin/live', {signal: ctrl.signal, cache: 'no-store'});
+    if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
+    const reader = r.body.getReader();
+    video.play().catch(() => {});
+    for (;;) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      live.bytes += value.byteLength;
+      jm.feed({video: value});
+    }
+    if (live) $('liveInfo').textContent = 'Stream beendet';
+  } catch (e) {
+    if (e.name !== 'AbortError') $('liveInfo').textContent = 'Fehler: ' + e.message;
+  }
+  stopLive(true);
+}
+function stopLive(keepInfo) {
+  if (!live) return;
+  clearInterval(live.timer); live.ctrl.abort(); try { live.jm.destroy(); } catch {}
+  live = null; $('btnLive').textContent = '▶ Vorschau starten';
+  if (!keepInfo) $('liveInfo').textContent = '';
+}
+$('btnLive').onclick = () => live ? stopLive() : startLive();
+document.addEventListener('visibilitychange', () => { if (document.hidden) stopLive(); });
+
+(async () => {
+  // Als App-Client anmelden, damit sich die Kamera nicht automatisch abschaltet
+  api('a=client&op=register').catch(() => {});
+  addEventListener('pagehide', () => fetch('/cgi-bin/api?a=client&op=unregister', {keepalive: true}));
+  await refreshStatus();
+  try { await loadModes(); await refreshCam(); await loadSettings(); await loadFiles(); }
+  catch (e) { msg('camMsg', 'Kamera antwortet nicht: ' + e, false); }
+  setInterval(() => { refreshCam().catch(() => {}); }, 3000);
+  setInterval(refreshStatus, 10000);
+})();
+</script>
+</body>
+</html>

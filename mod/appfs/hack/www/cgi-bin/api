@@ -1,0 +1,143 @@
+#!/bin/sh
+# API der Weboberfläche (busybox httpd CGI)
+#   GET  /cgi-bin/api?a=status
+#   GET  /cgi-bin/api?a=cam&c=<cgi-befehl>&-act=get&-name=...   (Proxy zu main_app)
+#   POST /cgi-bin/api?a=wifi        Formular: mode, ssid, psk, ap_ssid, ap_psk, timeout
+#   POST /cgi-bin/api?a=system      Formular: telnet, web_pass, ntp
+#   POST /cgi-bin/api?a=ota&sha=<sha256>   Rumpf: Update-Paket (tar)
+#   POST /cgi-bin/api?a=reboot
+#   GET  /cgi-bin/api?a=client&op=register|unregister   (pausiert Auto-Abschaltung)
+#   GET  /cgi-bin/api?a=files       Dateiliste (Pfad<TAB>Größe)
+#   GET  /cgi-bin/api?a=log
+. /app/hack/lib.sh
+
+urldecode() { $BB httpd -d "$1"; }
+qs_get() { urldecode "$(echo "&$QUERY_STRING" | sed -n "s/.*&$1=\([^&]*\).*/\1/p")"; }
+form_get() { urldecode "$(echo "&$FORM" | sed -n "s/.*&$1=\([^&]*\).*/\1/p" | sed 's/+/ /g')"; }
+json_esc() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\n\r'; }
+reply() { printf 'Content-Type: %s\r\nCache-Control: no-store\r\n\r\n' "${2:-application/json}"; printf '%s\n' "$1"; }
+fail() { printf 'Status: 400 Bad Request\r\nContent-Type: application/json\r\n\r\n{"ok":false,"error":"%s"}\n' "$(json_esc "$1")"; exit 0; }
+read_form() { FORM=""; [ "$REQUEST_METHOD" = POST ] && [ -n "$CONTENT_LENGTH" ] && FORM=$(head -c "$CONTENT_LENGTH"); }
+# Nur druckbare Zeichen ohne Anführungszeichen/Steuerzeichen für WLAN-Namen und Passwörter
+valid_str() { ! printf '%s' "$1" | grep -q '[[:cntrl:]"\\/&]'; }
+
+A=$(qs_get a)
+case "$A" in
+status)
+    st=$(cat $RUN/wifi_state 2>/dev/null)
+    reply "{\"ok\":true,\"mod\":\"$(json_esc "$MODVER")\",\"swver\":\"$(json_esc "$(installed_swver)")\",\
+\"wifi_state\":\"$(json_esc "$st")\",\"sta_ip\":\"$(json_esc "$(cat $RUN/sta_ip 2>/dev/null)")\",\
+\"wifi_mode\":\"$(json_esc "$(cfg WIFI_MODE auto)")\",\"sta_ssid\":\"$(json_esc "$(cfg STA_SSID)")\",\
+\"sta_psk_set\":$([ -n "$(cfg STA_PSK)" ] && echo true || echo false),\"sta_timeout\":\"$(json_esc "$(cfg STA_TIMEOUT 30)")\",\
+\"ap_ssid\":\"$(json_esc "$(cfg AP_SSID)")\",\"sd_override\":$([ -f $SDCONF ] && echo true || echo false),\
+\"telnet\":\"$(json_esc "$(cfg TELNET 1)")\",\"wifi_autostart\":\"$(json_esc "$(cfg WIFI_AUTOSTART 0)")\",\"ntp\":\"$(json_esc "$(cfg NTP 1)")\",\
+\"web_pass_set\":$([ -n "$(cfg WEB_PASS)" ] && echo true || echo false),\
+\"time\":\"$(date '+%F %T')\",\"uptime\":\"$(cut -d' ' -f1 /proc/uptime)\"}"
+    ;;
+cam)
+    c=$(qs_get c)
+    case "$c" in *[!a-z0-9]*|"") fail "ungültiger Befehl" ;; esac
+    rest=$(echo "$QUERY_STRING" | sed 's/^\(.*&\)\{0,1\}a=cam&\{0,1\}//; s/&\{0,1\}c=[a-z0-9]*//')
+    printf 'Content-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\n\r\n'
+    wget -q -T 15 -O - "http://127.0.0.1/cgi-bin/hi3510/$c.cgi?$rest"
+    ;;
+wifi)
+    read_form
+    mode=$(form_get mode); ssid=$(form_get ssid); psk=$(form_get psk)
+    ap_ssid=$(form_get ap_ssid); ap_psk=$(form_get ap_psk); to=$(form_get timeout)
+    case "$mode" in ap|sta|auto) ;; *) fail "Modus muss ap, sta oder auto sein" ;; esac
+    valid_str "$ssid" && valid_str "$psk" && valid_str "$ap_ssid" && valid_str "$ap_psk" || fail "Ungültige Zeichen (\" \\ / & nicht erlaubt)"
+    [ -n "$psk" ] && { [ ${#psk} -ge 8 ] && [ ${#psk} -le 63 ] || fail "WLAN-Passwort: 8 bis 63 Zeichen"; }
+    [ -n "$ap_psk" ] && { [ ${#ap_psk} -ge 8 ] && [ ${#ap_psk} -le 63 ] || fail "Zugangspunkt-Passwort: 8 bis 63 Zeichen"; }
+    case "$to" in ''|*[!0-9]*) to=30 ;; esac
+    cfg_set WIFI_MODE "$mode"
+    cfg_set STA_SSID "$ssid"
+    [ "$(form_get psk_keep)" = 1 ] || cfg_set STA_PSK "$psk"
+    cfg_set AP_SSID "$ap_ssid"
+    [ -n "$ap_psk" ] && cfg_set AP_PSK "$ap_psk"
+    cfg_set STA_TIMEOUT "$to"
+    log "WLAN-Einstellungen geändert (Modus $mode)"
+    reply '{"ok":true,"hint":"Wird beim nächsten Einschalten des WLANs aktiv."}'
+    ;;
+system)
+    read_form
+    t=$(form_get telnet); n=$(form_get ntp); p=$(form_get web_pass); w=$(form_get wifi_autostart)
+    [ "$t" = 0 ] || t=1; [ "$n" = 0 ] || n=1; [ "$w" = 0 ] || w=1
+    cfg_set TELNET "$t"; cfg_set NTP "$n"; cfg_set WIFI_AUTOSTART "$w"
+    if [ "$(form_get web_pass_change)" = 1 ]; then
+        valid_str "$p" || fail "Ungültige Zeichen im Passwort"
+        cfg_set WEB_PASS "$p"
+    fi
+    reply '{"ok":true,"hint":"Telnet und Passwort gelten nach dem nächsten Neustart."}'
+    ;;
+ota)
+    [ "$REQUEST_METHOD" = POST ] || fail "POST erwartet"
+    sd_mounted || fail "Keine SD-Karte"
+    sha=$(qs_get sha)   # optional; MANIFEST.sha256 im Paket wird immer geprüft
+    [ "$CONTENT_LENGTH" -gt 0 ] 2>/dev/null && [ "$CONTENT_LENGTH" -lt 20000000 ] || fail "Ungültige Größe"
+    T=$SD/CT9500MOD/ota
+    rm -rf $T; mkdir -p $T
+    head -c "$CONTENT_LENGTH" > $T/ota.tar
+    [ "$(wc -c < $T/ota.tar)" = "$CONTENT_LENGTH" ] || { rm -rf $T; fail "Übertragung unvollständig"; }
+    if [ -n "$sha" ]; then
+        [ "$(sha256sum $T/ota.tar | cut -d' ' -f1)" = "$sha" ] || { rm -rf $T; fail "Prüfsumme falsch (Übertragungsfehler)"; }
+    fi
+    (cd $T && tar xf ota.tar) || { rm -rf $T; fail "Paket kann nicht entpackt werden"; }
+    [ -f $T/MANIFEST.sha256 ] && [ -f $T/config ] || { rm -rf $T; fail "Kein CT9500-Paket"; }
+    (cd $T && sha256sum -c MANIFEST.sha256 >/dev/null 2>&1) || { rm -rf $T; fail "Dateien im Paket beschädigt"; }
+    grep -q "swverv2 'S2_GR01V2_2_2GDDR3_" $T/config || { rm -rf $T; fail "Paket ist nicht für diese Kamera"; }
+    sz() { [ -f $T/$1 ] && wc -c < $T/$1 || echo 0; }
+    [ $(sz appfs.jffs2) -le 8257536 ] && [ $(sz rootfs.jffs2) -le 1966080 ] && [ $(sz uImage) -le 2621440 ] &&
+        [ $(sz media_app_zip.bin) -le 3014656 ] || { rm -rf $T; fail "Image zu groß für die Partition"; }
+    # SD muss beschreibbar sein (bei FAT-Fehlern schaltet der Kernel auf nur-lesen)
+    grep " $SD " /proc/mounts | grep -q " rw," && touch $SD/.ota_test && rm -f $SD/.ota_test ||
+        { rm -rf $T; fail "SD-Karte ist schreibgeschützt oder beschädigt - bitte in der Kamera formatieren"; }
+    cfg_backup
+    # Crosstour-Einstellungen sichern; preboot.sh spielt sie nach dem Flashen vor main_app zurück
+    if [ -f /app/userPara.bin ]; then
+        cp /app/userPara.bin $PERSIST/userPara.bin && touch $PERSIST/restore_userpara
+    fi
+    # Alte Update-Dateien weg, neue ins Wurzelverzeichnis (config zuletzt: ohne sie flasht u-boot nichts)
+    for f in config appfs.jffs2 rootfs.jffs2 uImage media_app_zip.bin rawparam rawparambak; do rm -f $SD/$f; done
+    for f in appfs.jffs2 rootfs.jffs2 uImage media_app_zip.bin rawparam rawparambak config; do
+        [ -f $T/$f ] && cp $T/$f $SD/$f
+    done
+    sync
+    # Alles nochmal von der Karte prüfen
+    if ! (cd $SD && sha256sum -c $T/MANIFEST.sha256 >/dev/null 2>&1); then
+        for f in config appfs.jffs2 rootfs.jffs2 uImage media_app_zip.bin rawparam rawparambak; do rm -f $SD/$f; done
+        rm -rf $T; sync
+        log "OTA: Schreiben auf SD fehlgeschlagen"
+        fail "Schreiben auf die SD-Karte fehlgeschlagen - Karte formatieren und erneut versuchen"
+    fi
+    rm -rf $T
+    sync
+    log "OTA: Paket installiert, Neustart zum Flashen"
+    reply '{"ok":true,"hint":"Kamera startet neu und flasht (blaue LED, ca. 1-2 Minuten). Nicht unterbrechen!"}'
+    (sleep 2; sync; reboot) > /dev/null 2>&1 &
+    ;;
+client)
+    # Browser bei main_app als App-Client anmelden: pausiert die automatische Abschaltung
+    op=$(qs_get op)
+    case "$op" in register|unregister) ;; *) fail "op muss register oder unregister sein" ;; esac
+    r=$(wget -q -T 10 -O - "http://127.0.0.1/cgi-bin/hi3510/client.cgi?-act=set&-operation=$op&-ip=$REMOTE_ADDR")
+    reply "{\"ok\":$(echo "$r" | grep -q Success && echo true || echo false)}"
+    ;;
+reboot)
+    [ "$REQUEST_METHOD" = POST ] || fail "POST erwartet"
+    reply '{"ok":true}'
+    (sleep 1; sync; reboot) > /dev/null 2>&1 &
+    ;;
+files)
+    printf 'Content-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\n\r\n'
+    cd $SD 2>/dev/null && for f in DCIM/*/*; do
+        case "$f" in *.MP4|*.JPG|*.DNG|*.LRV) [ -f "$f" ] && printf '%s\t%s\n' "$f" "$(wc -c < "$f")" ;; esac
+    done
+    ;;
+log)
+    reply "$(tail -100 $RUN/mod.log 2>/dev/null)" "text/plain; charset=utf-8"
+    ;;
+*)
+    fail "Unbekannte Aktion"
+    ;;
+esac

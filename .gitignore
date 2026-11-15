@@ -1,0 +1,15 @@
+# Umgebung / Toolchain
+.venv/
+toolchain/
+__pycache__/
+*.pyc
+
+# Stock-Firmware (Hersteller) und Geräte-Backups (persönliche Daten)
+firmware/
+backup/
+
+# Build-Ausgaben
+build/
+out/
+*.tar
+*.jffs2

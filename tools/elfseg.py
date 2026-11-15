@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""main_app der CT9500 um ein Code-/Datensegment erweitern (zusätzliche Menüzeilen).
+
+  tools/elfseg.py <main_app> <ausgabe>
+
+1. src/menuhook.S bei SEG_VA assemblieren/linken (musl-Toolchain, nur ARM-Code ohne libc).
+2. Programmkopf 7 (PT_GNU_RELRO, nur Schreibschutz-Hilfe für ld.so) -> PT_LOAD (RWX) für
+   das neue Segment am Dateiende.
+3. SYSTEM_SET_button_onkeydown: Verweise auf die 6 Zeilenlisten (31 Einträge) auf die neuen
+   Listen (34 Einträge) umbiegen; Konstanten 31 -> 34 (auch in SYSTEM_SET_onshow).
+4. HiGV-Handlertabelle: Eintrag 55 (onshow) und 56 (button_onkeydown) -> Hooks.
+Jede Änderung prüft vorher den Originalinhalt.
+"""
+import os, re, struct, subprocess, sys, tempfile
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TC = os.path.join(ROOT, "toolchain/armv7l-linux-musleabihf-cross/bin/armv7l-linux-musleabihf-")
+SRC = os.path.join(ROOT, "src/menuhook.S")
+SEG_VA = 0x00420000
+NEW_ROWS = 34
+
+# VA der Original-Listen -> Symbol der neuen Liste
+LISTS = {0x378700: "rows_btn", 0x37877C: "rows_lbl", 0x3787F8: "rows_val",
+         0x378874: "rows_btn_rev", 0x3788F0: "rows_lbl_rev", 0x37896C: "rows_val_rev"}
+# Literal-Pool-Wort (VA), zugehöriger "add rX, pc, rX" (VA), Original-Ziel
+LIST_REFS = [
+    (0x881C4, 0x87C74, 0x3787F8), (0x881C8, 0x87C7C, 0x37877C), (0x881CC, 0x87C88, 0x378700),  # MENU: SYSTEM_SET_exit
+    (0x881D0, 0x87CB4, 0x3787F8), (0x881D4, 0x87CBC, 0x37877C), (0x881D8, 0x87CC8, 0x378700),  # hoch
+    (0x881F4, 0x87D84, None), (0x881F8, 0x87D8C, None), (0x881FC, 0x87D98, 0x378874),          # runter
+]
+# Instruktionen mit Konstante 31 (VA, Originalwort)
+IMM31 = [(0x87C80, 0xE3A0101F), (0x87CC0, 0xE3A0101F), (0x87D08, 0xE353001F), (0x87D34, 0xE3A0301F),
+         (0x87D90, 0xE3A0101F), (0x87DE4, 0xE3A0201F), (0x87E00, 0xE3A0301F), (0x7C2A8, 0xE3A0301F)]
+HANDLER_TABLE = 0x37835C          # VA, 200 Einträge
+HOOKS = {55: (0x7C13C, "hook_onshow"), 56: (0x87BB4, "hook_keydown")}
+
+
+def segments(d):
+    phoff, phentsize, phnum = struct.unpack_from("<I", d, 0x1C)[0], *struct.unpack_from("<HH", d, 0x2A)
+    return phoff, phentsize, [struct.unpack_from("<8I", d, phoff + i * phentsize) for i in range(phnum)]
+
+
+def va2off(d, va):
+    for p in segments(d)[2]:
+        if p[0] == 1 and p[2] <= va < p[2] + p[4]:
+            return p[1] + va - p[2]
+    raise ValueError(hex(va))
+
+
+def build_blob():
+    with tempfile.TemporaryDirectory() as t:
+        o, e, b = os.path.join(t, "h.o"), os.path.join(t, "h.elf"), os.path.join(t, "h.bin")
+        subprocess.run([TC + "gcc", "-c", "-mcpu=cortex-a7", "-marm", "-o", o, SRC], check=True)
+        subprocess.run([TC + "ld", "-Ttext", hex(SEG_VA), "-N", "-o", e, o], check=True)
+        subprocess.run([TC + "objcopy", "-O", "binary", "-j", ".text", e, b], check=True)
+        syms = {}
+        for line in subprocess.run([TC + "nm", e], capture_output=True, text=True, check=True).stdout.splitlines():
+            p = line.split()
+            if len(p) == 3:
+                syms[p[2]] = int(p[0], 16)
+        return open(b, "rb").read(), syms
+
+
+def patch(d, syms, blob):
+    d = bytearray(d)
+    def word(va):
+        return struct.unpack_from("<I", d, va2off(d, va))[0]
+    def setword(va, v):
+        struct.pack_into("<I", d, va2off(d, va), v & 0xFFFFFFFF)
+
+    # 3a) Listenverweise
+    for lit, addpc, expect in LIST_REFS:
+        tgt = (addpc + 8 + struct.unpack("<i", struct.pack("<I", word(lit)))[0]) & 0xFFFFFFFF
+        if expect is not None and tgt != expect:
+            raise SystemExit(f"Literal {lit:#x}: Ziel {tgt:#x} statt {expect:#x}")
+        if tgt not in LISTS:
+            raise SystemExit(f"Literal {lit:#x}: unbekanntes Ziel {tgt:#x}")
+        setword(lit, syms[LISTS[tgt]] - (addpc + 8))
+        print(f"  Liste {tgt:#x} -> {LISTS[tgt]} ({syms[LISTS[tgt]]:#x}) via Literal {lit:#x}")
+    # 3b) 31 -> 34
+    for va, orig in IMM31:
+        if word(va) != orig:
+            raise SystemExit(f"Instruktion {va:#x}: {word(va):#x} statt {orig:#x}")
+        setword(va, (orig & ~0xFF) | NEW_ROWS)
+    print(f"  {len(IMM31)} Konstanten 31 -> {NEW_ROWS}")
+    # 4) Handlertabelle
+    for idx, (orig, sym) in HOOKS.items():
+        va = HANDLER_TABLE + 4 * idx
+        if word(va) != orig:
+            raise SystemExit(f"Handler {idx}: {word(va):#x} statt {orig:#x}")
+        setword(va, syms[sym])
+        print(f"  Handler {idx}: {orig:#x} -> {sym} ({syms[sym]:#x})")
+    # 2) neues Segment
+    phoff, phentsize, phdrs = segments(d)
+    if phdrs[7][0] != 0x6474E552:          # PT_GNU_RELRO
+        raise SystemExit(f"Programmkopf 7 ist {phdrs[7][0]:#x}, nicht GNU_RELRO")
+    while len(d) % 0x1000:
+        d.append(0)
+    off = len(d)
+    d += blob
+    struct.pack_into("<8I", d, phoff + 7 * phentsize, 1, off, SEG_VA, SEG_VA, len(blob), len(blob), 7, 0x1000)
+    print(f"  Segment @ Datei {off:#x} / VA {SEG_VA:#x}, {len(blob)} Bytes (RWX)")
+    return bytes(d)
+
+
+def build(src_path):
+    blob, syms = build_blob()
+    return patch(open(src_path, "rb").read(), syms, blob), syms
+
+
+if __name__ == "__main__":
+    out, syms = build(sys.argv[1])
+    open(sys.argv[2], "wb").write(out)
+    print("fertig:", sys.argv[2], len(out), "Bytes")

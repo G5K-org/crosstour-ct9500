@@ -1,0 +1,3 @@
+#!/bin/sh
+# Live-Vorschau: H.264-Elementarstrom des Vorschau-Streams (1024x576) für die Weboberfläche
+exec /app/hack/rtsp2h264 -c 127.0.0.1 554 /livestream/12 2>/dev/null

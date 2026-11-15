@@ -1,0 +1,23 @@
+#!/bin/sh
+# udhcpc-Ereignisskript: setzt IP, Route und DNS im Heimnetz-Modus
+BB=/app/hack/busybox
+RUN=/dev/ct9500mod
+case "$1" in
+    deconfig)
+        $BB ip addr flush dev "$interface"
+        $BB ip link set "$interface" up
+        rm -f $RUN/sta_ip
+        ;;
+    bound|renew)
+        $BB ip addr flush dev "$interface"
+        $BB ip addr add "$ip/${mask:-24}" dev "$interface"
+        if [ -n "$router" ]; then
+            while $BB ip route del default 2>/dev/null; do :; done
+            for r in $router; do $BB ip route add default via "$r" dev "$interface"; break; done
+        fi
+        : > $RUN/resolv.conf
+        for d in $dns; do echo "nameserver $d" >> $RUN/resolv.conf; done
+        echo "$ip" > $RUN/sta_ip
+        ;;
+esac
+exit 0

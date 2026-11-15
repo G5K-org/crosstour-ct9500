@@ -52,6 +52,7 @@ BINARIES = {   # Ziel im Image -> selbst gebautes ARM-Programm
     "hack/wpa_supplicant": os.path.join(BUILD, "wpa_supplicant-2.11/wpa_supplicant/wpa_supplicant"),
     "hack/wpa_cli": os.path.join(BUILD, "wpa_supplicant-2.11/wpa_supplicant/wpa_cli"),
     "hack/rtsp2h264": os.path.join(ROOT, "build", "rtsp2h264"),   # aus src/rtsp2h264.c
+    "hack/memdump": os.path.join(ROOT, "build", "memdump"),       # aus src/memdump.c (Screenshots)
 }
 # Werden weder von main_app noch von Skripten benutzt (Originale liegen in firmware/fs/)
 REMOVE = ["rtwpriv", "param/bin2flash", "param/ini2bin_board", "sharefs/scene_ini2bin_board",
@@ -124,8 +125,12 @@ def patch_higv(img):
                                                  (472, None), (473, None)])
     assert handles == [(1121, 1122, 1123), (1124, 1125, 1126), (1127, 1128, 1129),
                        (1130, 1131, 1132)], handles  # wie in src/menuhook.S
-    img.put("bin/higv.bin", new, img.mode("bin/higv.bin"))
-    print(f"  ~ bin/higv.bin: {len(handles)} Menüzeilen ({handles})")
+    import higv_theme
+    new, fchg = higv_theme.bitmap_fonts_to_vector(new)
+    new, ncol = higv_theme.recolor(new, {higv_theme.accent_argb(higv_theme.OLD_ACCENT): higv_theme.accent_argb(higv_theme.NEW_ACCENT)})
+    new = higv_theme.fix_crc(new)
+    img.put("bin/higv.bin", bytes(new), img.mode("bin/higv.bin"))
+    print(f"  ~ bin/higv.bin: {len(handles)} Menüzeilen ({handles}); Bitmap-Schriften -> vector.ttf {fchg}")
 
 
 def patch_lang(img):
@@ -148,8 +153,37 @@ def patch_lang(img):
     print(f"  ~ bin/*.lang: Menütexte {sorted(MENU_ROWS)}; de.lang {len(DE)} Korrekturen")
 
 
+def patch_font(img):
+    """UI-Schrift: Inter (SIL OFL) + CJK-Zeichen der Original-Schrift (tools/mkfont.py)."""
+    import mkfont
+    out = os.path.join(ROOT, "build", "ui_font.ttf")
+    mkfont.main(os.path.join(MOD, "fonts", "Inter-Medium.ttf"), out)
+    img.put("bin/res/font/vector.ttf", open(out, "rb").read(), img.mode("bin/res/font/vector.ttf"))
+    img.mkdir("hack/fonts", 0o40750)
+    img.put("hack/fonts/OFL-Inter.txt", open(os.path.join(MOD, "fonts", "OFL.txt"), "rb").read(), 0o100640)
+    print("  ~ bin/res/font/vector.ttf: Inter (Lizenz: hack/fonts/OFL-Inter.txt)")
+
+
+def patch_pictures(img):
+    """Akzentfarbe der Oberflächenbilder: #0645EA -> Akzentblau #0A84FF (tools/higv_theme.py)."""
+    import higv_theme
+    base = os.path.join(ROOT, "firmware/fs/appfs/bin")
+    n = 0
+    for root, _, files in os.walk(os.path.join(base, "res/pic")):
+        for f in files:
+            if f.endswith(".png"):
+                rel = os.path.relpath(os.path.join(root, f), os.path.join(ROOT, "firmware/fs/appfs"))
+                new = higv_theme.recolor_png(open(os.path.join(root, f), "rb").read())
+                if new:
+                    img.put(rel, new, img.mode(rel))
+                    n += 1
+    print(f"  ~ bin/res/pic: {n} Bilder auf Akzentfarbe {higv_theme.NEW_ACCENT}")
+
+
 def patch_appfs(img, name):
     overlay(img, os.path.join(MOD, "appfs"))
+    patch_font(img)
+    patch_pictures(img)
     patch_main_app(img)
     patch_higv(img)
     patch_lang(img)

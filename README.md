@@ -43,6 +43,11 @@ Build (mit Original-Firmware und ARM-Toolchain `armv7l-linux-musleabihf`):
 .venv/bin/python tools/build.py M50          # -> out/M50/ (SD-Karte) und out/M50.tar (OTA)
 ```
 
+## Lizenz
+
+Eigener Code und eigene Inhalte: **MIT-Lizenz** (siehe `LICENSE`) – frei nutzbar, änderbar und
+weitergebbar, auch kommerziell, solange der Lizenzhinweis erhalten bleibt.
+
 ## Lizenzen von Fremdbestandteilen
 
 | Bestandteil | Lizenz | Datei |

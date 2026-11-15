@@ -268,6 +268,12 @@ pwr_usb_paused: .word 0
 hook_long_wifi:
     push    {r4, r5}
     sub     sp, sp, #16             @ Zustand: 12 Byte
+    ldr     r4, =long_dbg           @ Diagnose: [0] Aufrufe, [1] Stufe, [2] Zustand, [3] IsShow(564)
+    ldr     r5, [r4]
+    add     r5, r5, #1
+    str     r5, [r4]
+    mov     r5, #1
+    str     r5, [r4, #4]
     bl      SCRDORMANT              @ Bildschirm aus: Original (weckt nur auf)
     cmp     r0, #0
     bne     1f
@@ -276,16 +282,26 @@ hook_long_wifi:
     cmp     r0, #0
     bne     1f
     ldr     r0, [sp]
+    str     r0, [r4, #8]
+    mov     r5, #2
+    str     r5, [r4, #4]
     cmp     r0, #8                  @ 0..8 = Video-/Fotomodi
     bhi     1f
+    mov     r5, #3
+    str     r5, [r4, #4]
     mov     r0, #103                @ Startbildschirm sichtbar?
     bl      ISSHOW
     cmp     r0, #0
     beq     1f
+    mov     r5, #4
+    str     r5, [r4, #4]
     mov     r0, #564                @ Einstellungen nicht schon offen
     bl      ISSHOW
+    str     r0, [r4, #12]
     cmp     r0, #0
     bne     1f
+    mov     r5, #5
+    str     r5, [r4, #4]
     mov     r0, #4
     bl      KEYTONE
     ldr     r0, =s_ui_sysset        @ ctui will die Original-Liste ("System")?
@@ -337,6 +353,7 @@ hook_set_exit:
     pop     {r4, pc}
     .ltorg
 quick_set:  .word 0
+long_dbg:   .word 0, 0, 0, 0
 
 @ ---------------------------------------------------------------- Test-Tasten über sendclickkey.cgi
 @ PDT_NETCTRL_SendClickKey ruft am Ende PDT_NETCTRL_PublishEvent(&ev) auf (0xa7fd0).

@@ -383,7 +383,7 @@ static const char *item_icon(const char *it)
 
 /* ------------------------------------------------------------------ Seiten */
 #define MAXROWS 24
-struct rowd { char label[48], value[48], icon[24], key[48]; int chevron, toggle; };
+struct rowd { char label[48], value[48], icon[24], key[48]; int chevron, toggle, check; };
 struct page {
     int kind;                 /* P_MAIN, P_MODES, P_ITEMS, P_OPTIONS, P_CONN */
     char title[48], arg[48];
@@ -426,7 +426,7 @@ static void load_page(struct page *p)
             snprintf(d->label, sizeof d->label, "%s", de(parts[i]));
             snprintf(d->key, sizeof d->key, "%s", parts[i]);
             snprintf(d->icon, sizeof d->icon, "%s", mode_icon(parts[i]));
-            if (!strcmp(parts[i], cur_mode)) { strcpy(d->value, "\xe2\x9c\x93"); p->sel = i; }  /* ✓ */
+            if (!strcmp(parts[i], cur_mode)) { d->check = 1; p->sel = i; }
         }
     } else if (p->kind == P_ITEMS) {
         char it[512], cu[512];
@@ -454,7 +454,7 @@ static void load_page(struct page *p)
             memset(d, 0, sizeof *d);
             snprintf(d->label, sizeof d->label, "%s", de(parts[i]));
             snprintf(d->key, sizeof d->key, "%s", parts[i]);
-            if (!strcmp(parts[i], cv)) { strcpy(d->value, "\xe2\x9c\x93"); p->sel = i; }
+            if (!strcmp(parts[i], cv)) { d->check = 1; p->sel = i; }
         }
     } else if (p->kind == P_CONN) {
         static const char *l[] = {"WLAN-Autostart", "Heimnetz", "Telnet"};
@@ -484,6 +484,28 @@ static void draw_toggle(int x, int y, int on)
     rrect(on ? x + 18 : x + 2, y + 2, on ? x + 38 : x + 22, y + 22, 10, 0xFFFFFF);
 }
 
+/* Häkchen (✓ fehlt in der Schrift): zwei dicke, geglättete Linien */
+static void line_aa(float x0, float y0, float x1, float y1, float w, rgb c)
+{
+    int minx = (int)(x0 < x1 ? x0 : x1) - 3, maxx = (int)(x0 > x1 ? x0 : x1) + 3;
+    int miny = (int)(y0 < y1 ? y0 : y1) - 3, maxy = (int)(y0 > y1 ? y0 : y1) + 3;
+    float dx = x1 - x0, dy = y1 - y0, l2 = dx * dx + dy * dy;
+    for (int y = miny; y <= maxy; y++)
+        for (int x = minx; x <= maxx; x++) {
+            float t = ((x - x0) * dx + (y - y0) * dy) / l2;
+            t = t < 0 ? 0 : t > 1 ? 1 : t;
+            float ex = x0 + t * dx - x, ey = y0 + t * dy - y, d = ex * ex + ey * ey;
+            float r = w / 2, a = (r + 0.5f - __builtin_sqrtf(d));
+            if (a > 0) blend(x, y, c, a >= 1 ? 255 : (int)(a * 255));
+        }
+}
+
+static void draw_check(int x, int y, rgb c)
+{
+    line_aa(x, y + 7, x + 5, y + 12, 2.4f, c);
+    line_aa(x + 5, y + 12, x + 14, y + 1, 2.4f, c);
+}
+
 static void draw(void)
 {
     struct page *p = &stack[depth];
@@ -505,6 +527,7 @@ static void draw(void)
         int right = W - 18;
         if (d->chevron) { text(right - 7, y + 25, "\xe2\x80\xba", 20, i == p->sel ? C_TEXT : C_SUB, 0, 0); right -= 14; }
         if (d->toggle) { draw_toggle(right - 40, y + 7, d->toggle == 2); right -= 46; }
+        if (d->check) { draw_check(right - 14, y + 12, i == p->sel ? C_TEXT : C_ACCENT); right -= 22; }
         int vw = 0;
         if (d->value[0]) {
             vw = text_w(d->value, 15);

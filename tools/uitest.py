@@ -46,7 +46,9 @@ def main():
             shots.append(p)
             print("shot", p)
         elif t == "open":
-            for attempt in range(8):
+            for attempt in range(1):   # nur einmal: L1 auf der Startseite kann WLAN schalten
+                key("L2")              # wecken: lang Auslöser tut nichts, weckt aber den Bildschirm
+                time.sleep(1.5)
                 key("L1")
                 time.sleep(3)
                 if not is_home(shot(os.path.join(OUT, f"{name}_probe.png"))):
@@ -56,6 +58,10 @@ def main():
             else:
                 raise SystemExit("Menü ging nicht auf")
         else:
+            # Sicherheit: Tasten nur in einem offenen Menü (auf der Startseite lösen sie Aufnahme,
+            # Moduswechsel oder WLAN aus). Ausnahme: L1 öffnet das Menü.
+            if t.upper() != "L1" and is_home(shot(os.path.join(OUT, f"{name}_guard.png"))):
+                raise SystemExit(f"Abbruch vor {t}: Startseite sichtbar, kein Menü offen")
             key(t)
             time.sleep(wait)
     if shots:

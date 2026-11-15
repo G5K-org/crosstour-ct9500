@@ -28,6 +28,7 @@
     .equ SETCOMM,          0x00027514   @ HI_PDT_PARAM_SetCommParam(type, void *in)
     .equ ENABLEUSB,        0x00059ecc   @ PDT_UI_COMM_EnableUSB(void)
     .equ PT_USB_MODE,      30
+    .equ ACCESS,           0x0001a5e0   @ access@plt
     .equ STARTWINDOW,      0x00074c64   @ PDT_UI_WINMNG_StartWindow(handle, flag)
     .equ SETSKIN,          0x001b8fc8   @ HI_GV_Widget_SetSkin(handle, type, skin)
     .equ STR_OFF,          183          @ Sprachtext "AUS"/"OFF"
@@ -68,12 +69,16 @@ run_menu:
     pop     {r4, pc}
 
 @ ---------------------------------------------------------------- refresh_all()
-refresh_all:
+refresh_all:                            @ Zustände aus Merker-Dateien (menu.sh sync), ohne Shell
     push    {r4, lr}
     mov     r4, #0
-1:  adr     r0, cmd_get
-    mov     r1, r4
-    bl      run_menu
+1:  ldr     r0, =st_paths
+    ldr     r0, [r0, r4, lsl #2]
+    mov     r1, #0                  @ F_OK
+    bl      ACCESS
+    cmp     r0, #0
+    moveq   r0, #1                  @ Datei da = EIN
+    movne   r0, #0
     mov     r1, r0
     mov     r0, r4
     bl      set_label
@@ -98,9 +103,10 @@ usb_get:
     movhi   r4, #2
     cmp     r4, #0                  @ "Laden": Debug-Merker abfragen
     bne     1f
-    adr     r0, s_dbg_get
-    bl      SYSTEM
-    cmp     r0, #0                  @ Exit-Code 0 = Debug eingeschaltet
+    ldr     r0, =s_st_usbdbg
+    mov     r1, #0
+    bl      ACCESS
+    cmp     r0, #0                  @ Merker-Datei da = Debug eingeschaltet
     moveq   r4, #3
 1:  mov     r0, r4
     add     sp, sp, #8
@@ -109,7 +115,7 @@ usb_get:
 @ ---------------------------------------------------------------- usb_label(wert=r0)
 usb_label:
     push    {r4, lr}
-    adr     r1, usb_str
+    ldr     r1, =usb_str
     ldr     r1, [r1, r0, lsl #2]
     ldr     r4, =FIRST_BTN + 3 * USB_ROW + 2
     mov     r0, r4
@@ -125,16 +131,16 @@ usb_toggle:
     sub     sp, sp, #8
     bl      usb_get
     mov     r5, r0                  @ bisher
-    adr     r1, usb_next
+    ldr     r1, =usb_next
     ldr     r4, [r1, r0, lsl #2]    @ neu
     cmp     r4, #3
     bne     1f
-    adr     r0, s_dbg_on            @ Laden -> Debug: main_app bleibt auf "Laden"
+    ldr     r0, =s_dbg_on            @ Laden -> Debug: main_app bleibt auf "Laden"
     bl      SYSTEM
     b       2f
 1:  cmp     r5, #3
     bne     3f
-    adr     r0, s_dbg_off           @ Debug -> Speicher: erst g_multi freigeben
+    ldr     r0, =s_dbg_off           @ Debug -> Speicher: erst g_multi freigeben
     bl      SYSTEM
 3:  str     r4, [sp]
     mov     r0, #PT_USB_MODE
@@ -147,7 +153,12 @@ usb_toggle:
     pop     {r4, r5, r6, pc}
 
 usb_next:   .word 3, 0, 1, 2        @ Laden->Debug, PC-Kamera->Laden, Speicher->PC-Kamera, Debug->Speicher
-s_dbg_get:  .asciz "/app/hack/usbnet.sh enabled"
+s_st_usbdbg: .asciz "/dev/ct9500mod/m_usbdebug"
+s_st0:      .asciz "/dev/ct9500mod/m_wlanauto"
+s_st1:      .asciz "/dev/ct9500mod/m_heimnetz"
+s_st2:      .asciz "/dev/ct9500mod/m_telnet"
+    .balign 4
+st_paths:   .word s_st0, s_st1, s_st2
 s_dbg_on:   .asciz "/app/hack/usbnet.sh on >/dev/null 2>&1"
 s_dbg_off:  .asciz "/app/hack/usbnet.sh off >/dev/null 2>&1"
     .balign 4
@@ -207,7 +218,7 @@ pwr_usb_pause:                          @ ersetzt Sprungtabelle Zustand 10 und 1
     beq     PWR_RET0
     mov     r2, #0
     str     r2, [r3]
-    adr     r3, pwr_usb_paused
+    ldr     r3, =pwr_usb_paused
     mov     r2, #1
     str     r2, [r3]
     mov     r3, #0
@@ -226,7 +237,7 @@ pwr_resume:                             @ ersetzt "b 0x72038" (übrige Zustände
     mov     r3, #1
     str     r3, [fp, #-376]         @ RESUME
     str     r3, [fp, #-368]         @ Timer neu starten
-    adr     r2, pwr_usb_paused
+    ldr     r2, =pwr_usb_paused
     ldr     r3, [r2]
     cmp     r3, #0
     moveq   r3, #1                  @ normal: SYSTEM_SCREEN
@@ -238,6 +249,113 @@ pwr_resume:                             @ ersetzt "b 0x72038" (übrige Zustände
 
     .ltorg
 pwr_usb_paused: .word 0
+
+@ ---------------------------------------------------------------- Schnellzugriff Einstellungen
+@ WLAN-Taste (Taste 1) lang drücken (Ereignis 0x10800001) öffnet auf dem Startbildschirm
+@ (Video-/Fotomodi) sofort die Einstellungen, ohne den Umweg Foto -> Wiedergabe (je 1-2 s
+@ Neuaufbau der Pipeline). PDT_UI_COMM_OnEvent, Sprungtabelle "lang gedrückt" (0x5fa14):
+@ Eintrag Taste 1 "b 0x5fa8c" (sendet Taste 0x10039, die die Startseite ignoriert) -> hier.
+@ Muss im OnEvent-Kontext laufen: aus HOME_PAGE_OnKeyDown heraus wird das Fenster überdeckt.
+@ Lang Modus-Taste (Taste 0) = Ausschalten bleibt unverändert.
+    .equ LONG1_ORIG,  0x0005fa8c
+    .equ ONEV_RET0,   0x0005f884        @ OnEvent: return 0
+    .equ GETSTATE,    0x00031130        @ HI_PDT_STATEMNG_GetState(&st), st = 12 Byte
+    .equ ISSHOW,      0x001b8e3c        @ HI_GV_Widget_IsShow(h)
+    .equ SCRDORMANT,  0x00071af4        @ PDT_UI_POWERCTRL_IsScreenDormant()
+    .equ SHOWSYSSET,  0x00052f34        @ UI_ShowSystemSet()
+    .equ KEYTONE,     0x00059dbc        @ PDT_UI_COMM_KeyTone(4)
+    .global hook_long_wifi
+hook_long_wifi:
+    push    {r4, r5}
+    sub     sp, sp, #16             @ Zustand: 12 Byte
+    bl      SCRDORMANT              @ Bildschirm aus: Original (weckt nur auf)
+    cmp     r0, #0
+    bne     1f
+    mov     r0, sp
+    bl      GETSTATE
+    cmp     r0, #0
+    bne     1f
+    ldr     r0, [sp]
+    cmp     r0, #8                  @ 0..8 = Video-/Fotomodi
+    bhi     1f
+    mov     r0, #103                @ Startbildschirm sichtbar?
+    bl      ISSHOW
+    cmp     r0, #0
+    beq     1f
+    mov     r0, #564                @ Einstellungen nicht schon offen
+    bl      ISSHOW
+    cmp     r0, #0
+    bne     1f
+    mov     r0, #4
+    bl      KEYTONE
+    ldr     r0, =quick_set          @ Merker: per Schnellzugriff geöffnet
+    mov     r1, #1
+    str     r1, [r0]
+    bl      SHOWSYSSET
+    add     sp, sp, #16
+    pop     {r4, r5}
+    b       ONEV_RET0
+1:  add     sp, sp, #16
+    pop     {r4, r5}
+    b       LONG1_ORIG
+
+@ SYSTEM_SET_exit ruft GKU_Change_WorkMode(gespeicherter Modus, Rückruf) (bl 0x7c0bc): schaltet
+@ immer in den gespeicherten Aufnahmemodus (Pipeline-Neuaufbau ~1 s, aus Foto -> Video).
+@ Nach Schnellzugriff stattdessen ohne Moduswechsel zurück: wie der Rückruf
+@ V100_PDT_UI_PLAYBACK_OnReceiveMsgResult bei Erfolg (Startseite an, 564/155 zu, speichern).
+    .equ CHANGE_WM,   0x000622c8        @ GKU_Change_WorkMode
+    .equ STARTWIN,    0x00074c64        @ PDT_UI_WINMNG_StartWindow(h, 1)
+    .equ FINISHWIN,   0x00075108        @ PDT_UI_WINMNG_FinishWindow(h)
+    .equ USERSAVE,    0x000ca638        @ gku_user_SaveParam(1)
+    .global hook_set_exit
+hook_set_exit:
+    ldr     r12, =quick_set
+    ldr     r3, [r12]
+    cmp     r3, #0
+    beq     CHANGE_WM               @ normal geöffnet: Original
+    mov     r3, #0
+    str     r3, [r12]
+    push    {r4, lr}
+    mov     r0, #103
+    mov     r1, #1
+    bl      STARTWIN
+    ldr     r0, =564
+    bl      FINISHWIN
+    mov     r0, #155
+    bl      FINISHWIN
+    mov     r0, #1
+    bl      USERSAVE
+    mov     r0, #0
+    pop     {r4, pc}
+    .ltorg
+quick_set:  .word 0
+
+@ ---------------------------------------------------------------- Test-Tasten über sendclickkey.cgi
+@ PDT_NETCTRL_SendClickKey ruft am Ende PDT_NETCTRL_PublishEvent(&ev) auf (0xa7fd0).
+@ Zusätzliche Typen (-type=..): "K<n>" = Klick (0x10800000), "L<n>" = langer Druck
+@ (0x10800001), n = 0..3 (0 Modus, 1 WLAN, 2 Auslöser, 3). "L0" wird verweigert:
+@ lang Modus = Ausschalten. Typ-String beim Aufrufer in [fp-588]; [ev] = ID, [ev+4] = Taste.
+    .equ NET_PUBLISH, 0x000a0228
+    .global hook_clickkey
+hook_clickkey:
+    sub     r2, fp, #588
+    ldrb    r1, [r2]
+    orr     r1, r1, #0x20           @ Kleinbuchstabe
+    ldrb    r3, [r2, #1]
+    sub     r3, r3, #'0'
+    cmp     r3, #3
+    bhi     9f
+    mov     r12, #0x10800000
+    cmp     r1, #'k'
+    beq     8f
+    cmp     r1, #'l'
+    bne     9f
+    cmp     r3, #0
+    beq     9f                      @ L0 nie (Ausschalten)
+    add     r12, r12, #1
+8:  str     r12, [r0]
+    str     r3, [r0, #4]
+9:  b       NET_PUBLISH
 
 @ ---------------------------------------------------------------- Handler-Tabelle Eintrag 55
 hook_onshow:
@@ -270,7 +388,7 @@ hook_keydown:
     bne     3f
     bl      usb_toggle
     b       2f
-3:  adr     r0, cmd_toggle
+3:  ldr     r0, =cmd_toggle
     mov     r1, r5
     bl      run_menu
     mov     r1, r0

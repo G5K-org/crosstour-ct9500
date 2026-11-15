@@ -38,7 +38,10 @@ CALLS = [(0x612B8, 0x74C64, "hook_usbwin"),    # bl: USB-Fenster 176, Bild/Text 
          # PDT_UI_POWERCTRL_PreProcessEvent: Bildschirm-Ruhemodus auch im USB-Modus
          (0x71FD4, 0x71FF0, "pwr_usb_pause"),  # b: Sprungtabelle Zustand 10 (UVC)
          (0x71FD8, 0x71FF0, "pwr_usb_pause"),  # b: Sprungtabelle Zustand 11 (USB-Speicher)
-         (0x71FCC, 0x72038, "pwr_resume")]     # b: alle anderen Zustände (Resume)
+         (0x71FCC, 0x72038, "pwr_resume"),     # b: alle anderen Zustände (Resume)
+         (0xA7FD0, 0xA0228, "hook_clickkey"),  # bl: sendclickkey.cgi Test-Tasten K<n>/L<n>
+         (0x5FA20, 0x5FA8C, "hook_long_wifi"), # b: lang WLAN-Taste = Einstellungen
+         (0x7C0BC, 0x622C8, "hook_set_exit")]  # bl: Einstellungen verlassen ohne Moduswechsel
 
 
 def segments(d):
@@ -100,10 +103,10 @@ def patch(d, syms, blob):
     for va, orig, sym in CALLS:
         w = word(va)
         tgt = (va + 8 + (((w & 0xFFFFFF) ^ 0x800000) - 0x800000) * 4) & 0xFFFFFFFF
-        if w >> 24 not in (0xEA, 0xEB) or tgt != orig:
+        if (w & 0x0E000000) != 0x0A000000 or tgt != orig:   # B/BL, beliebige Bedingung
             raise SystemExit(f"B/BL {va:#x}: {w:#x} (Ziel {tgt:#x}) statt {orig:#x}")
         setword(va, (w & 0xFF000000) | (((syms[sym] - (va + 8)) >> 2) & 0xFFFFFF))
-        print(f"  {'BL' if w >> 24 == 0xEB else 'B '} {va:#x}: {orig:#x} -> {sym} ({syms[sym]:#x})")
+        print(f"  {'BL' if w & 0x01000000 else 'B '}{'' if w >> 28 == 0xE else f'(cond {w >> 28:x})'} {va:#x}: {orig:#x} -> {sym} ({syms[sym]:#x})")
     # 2) neues Segment
     phoff, phentsize, phdrs = segments(d)
     if phdrs[7][0] != 0x6474E552:          # PT_GNU_RELRO

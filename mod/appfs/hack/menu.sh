@@ -3,6 +3,8 @@
 #   menu.sh get <n>      Exit-Code = Zustand (0 = AUS, 1 = EIN)
 #   menu.sh toggle <n>   umschalten, Exit-Code = neuer Zustand
 # n: 0 = WLAN-Autostart, 1 = Heimnetz (sonst nur Kamera-WLAN), 2 = Telnet
+#   menu.sh sync         Merker-Dateien $RUN/m_* schreiben (main_app liest nur diese,
+#                        per access(), ohne Shell; Aufruf beim Start und nach toggle)
 # Muss schnell sein und darf nie hängen (läuft im UI-Thread von main_app).
 . /app/hack/lib.sh
 
@@ -15,7 +17,20 @@ state() {
     esac
 }
 
+FLAGS="m_wlanauto m_heimnetz m_telnet"   # Index 0..2, Namen wie in src/menuhook.S
+sync_flags() {
+    n=0
+    for f in $FLAGS; do
+        if state $n; then : > $RUN/$f; else rm -f $RUN/$f; fi
+        n=$((n + 1))
+    done
+}
+
 case "$1" in
+sync)
+    sync_flags
+    exit 0
+    ;;
 get)
     state "$2" && exit 1
     exit 0
@@ -33,6 +48,7 @@ toggle)
            fi ;;
         *) exit 0 ;;
     esac
+    sync_flags
     log "Menü: Eintrag $2 -> $new"
     exit $new
     ;;

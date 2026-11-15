@@ -53,6 +53,9 @@ if [ "$(cfg TELNET 1)" = 1 ]; then
     telnetd -l /bin/sh
 fi
 
+# Merker-Dateien für die Menüzeilen (main_app liest sie per access())
+$HACK/menu.sh sync
+
 # USB-Debugzugang (Netzwerk + Konsole über USB), wenn im Menü "USB-Modus: Debug" gewählt
 $HACK/usbnet.sh boot > /dev/null 2>&1 &
 

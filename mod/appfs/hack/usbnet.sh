@@ -60,10 +60,11 @@ stop() {
 
 case "$1" in
 enabled) [ "$(cfg USB_DEBUG 0)" = 1 ]; exit $? ;;
-on) cfg_set USB_DEBUG 1; start ;;
-off) cfg_set USB_DEBUG 0; stop ;;
+on) cfg_set USB_DEBUG 1; : > $RUN/m_usbdebug; start ;;
+off) cfg_set USB_DEBUG 0; rm -f $RUN/m_usbdebug; stop ;;
 boot)
-    [ "$(cfg USB_DEBUG 0)" = 1 ] || exit 0
+    [ "$(cfg USB_DEBUG 0)" = 1 ] || { rm -f $RUN/m_usbdebug; exit 0; }
+    : > $RUN/m_usbdebug      # Merker für das Menü (main_app liest ihn per access())
     sleep 8   # main_app hat sein USB-Gadget (falls doch Webcam/Speicher eingestellt) dann geladen
     start ;;
 start) start ;;

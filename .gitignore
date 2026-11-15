@@ -13,3 +13,6 @@ build/
 out/
 *.tar
 *.jffs2
+
+# Alte Versuche mit Herstellerdaten (nicht veröffentlichen)
+attic/

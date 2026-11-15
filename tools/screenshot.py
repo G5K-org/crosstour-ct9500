@@ -24,17 +24,17 @@ def png(path, w, h, rgb):
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else "screen.png"
     global W, H
-    # Bevorzugt: tatsächlich angezeigter HiFB-Puffer (EXTEND-Modus, Dreifachpuffer, schon um 90°
-    # gedreht, 320x240). /dev/fb0 ist nur die Zeichenfläche - Dialoge fehlen dort teils.
+    # Bevorzugt: tatsächlich angezeigter HiFB-Puffer (EXTEND-Modus, Dreifachpuffer, hochkant 240x320). /dev/fb0 ist nur die Zeichenfläche - Dialoge fehlen dort teils.
     out_sh, _ = run("mkdir -p /dev/ct9500mod/shot; M=/app/hack/memdump; [ -x $M ] || M=/dev/ct9500mod/memdump; "
-        "A=$(sed -n 's/.*Displaying addr (register) *:\\(0x[0-9a-fA-F]*\\).*/\\1/p' /proc/umap/hifb0); "
+        "A=$(awk -F: '/Displaying addr/{gsub(/ /,\"\",$2); print $2}' /proc/umap/hifb0); "
         "if [ -x $M ] && [ -n \"$A\" ] && [ \"$1\" != fb ]; then $M $A 153600 > /dev/ct9500mod/shot/fb.raw; echo MODE=disp; "
         "else dd if=/dev/fb0 of=/dev/ct9500mod/shot/fb.raw bs=153600 count=1 2>/dev/null; echo MODE=fb; fi; "
         "netstat -tln | grep -q ':8083 ' || /app/hack/busybox httpd -p 8083 -h /dev/ct9500mod/shot", host=HOST)
     disp = "MODE=disp" in out_sh and "--fb" not in sys.argv
+    if not disp:
+        print("Hinweis: angezeigter Puffer nicht lesbar, /dev/fb0 (evtl. veraltet)", file=sys.stderr)
     d = urllib.request.urlopen(f"http://{HOST}:8083/fb.raw", timeout=10).read()
-    if disp:
-        W, H = 320, 240
+    # Anzeigepuffer ist (nach der 90°-Drehung von HiFB) wie die Zeichenfläche hochkant 240x320
     # Format: ARGB4444 (gemessen: Werte wie 0xf111/0xf222 = Grautöne); FBFMT=argb1555|rgb565 zum Vergleich
     fmt = os.environ.get("FBFMT", "argb4444")
     rgb = bytearray()
@@ -49,7 +49,7 @@ def main():
         else:
             r, g, b = (v >> 10) & 31, (v >> 5) & 31, v & 31
             rgb += bytes((r * 255 // 31, g * 255 // 31, b * 255 // 31))
-    if "--rotate" in sys.argv and not disp:   # 90° drehen (Zeichenfläche ist hochkant)
+    if "--rotate" in sys.argv:   # 90° drehen (Puffer sind hochkant, Display quer montiert)
         rot = bytearray(len(rgb))
         for y in range(H):
             for x in range(W):

@@ -82,6 +82,10 @@ MAIN_APP_PATCHES = [
     # Einschalten ab, wenn keine Handy-App verbunden ist - im Heimnetz-Modus also immer
     # (am 15.11. mit M10 beobachtet). Erste Instruktion "push {fp, lr}" -> "bx lr".
     (0x42CBC, bytes.fromhex("00482de9"), bytes.fromhex("1eff2fe1"), "WLAN-3-Minuten-Abschaltung deaktiviert"),
+    # UI_SetWifiControl (VA 0x63c30): bei WLAN an ohne verbundene Handy-App blendet das Original
+    # Widget 140 ein (Vollbild "SSID/PWD" über dem Startbildschirm, blockiert die Bedienung).
+    # "bl HI_GV_Widget_Show" -> "bl HI_GV_Widget_Hide" (0x1b8b88).
+    (0x53C30, bytes.fromhex("685505eb"), bytes.fromhex("d45305eb"), "WLAN-Info-Vollbild (SSID/PWD) nicht mehr einblenden"),
 ]
 
 

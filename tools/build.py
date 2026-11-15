@@ -121,8 +121,10 @@ def patch_main_app(img):
 def patch_higv(img):
     import higv_addrows
     stock = os.path.join(ROOT, "firmware/fs/appfs/bin/higv.bin")
+    TELNET_ICON = (0x21A, 0x219, 0x219)   # Skins md_no_select/md_select (unbenutzt) -> Terminal-Icon
+    USB_ICON = (0x228, 0x227, 0x227)      # Skins hdr_no_select/hdr_select (unbenutzt) -> USB-Icon
     new, handles = higv_addrows.add_rows(stock, [(470, higv_addrows.WIFI_ICON), (471, higv_addrows.WIFI_ICON),
-                                                 (472, None), (473, None)])
+                                                 (472, TELNET_ICON), (473, USB_ICON)])
     assert handles == [(1121, 1122, 1123), (1124, 1125, 1126), (1127, 1128, 1129),
                        (1130, 1131, 1132)], handles  # wie in src/menuhook.S
     import higv_theme
@@ -178,6 +180,16 @@ def patch_pictures(img):
                     img.put(rel, new, img.mode(rel))
                     n += 1
     print(f"  ~ bin/res/pic: {n} Bilder auf Akzentfarbe {higv_theme.NEW_ACCENT}")
+    # Neue Icons (modernen Stil, tools/mkicons.py; Symbole: Tabler Icons, MIT)
+    import mkicons
+    out = os.path.join(ROOT, "build", "icons")
+    shutil.rmtree(out, ignore_errors=True)
+    icons = mkicons.build(out)
+    for rel in icons:
+        dst = "bin/" + rel
+        img.put(dst, open(os.path.join(out, rel), "rb").read(), img.mode(dst) or 0o100750)
+    img.put("hack/fonts/LICENSE-tabler-icons.txt", open(os.path.join(MOD, "icons/tabler/LICENSE"), "rb").read(), 0o100640)
+    print(f"  ~ bin/res/pic: {len(icons)} neue Icons")
 
 
 def patch_appfs(img, name):

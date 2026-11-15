@@ -53,6 +53,9 @@ if [ "$(cfg TELNET 1)" = 1 ]; then
     telnetd -l /bin/sh
 fi
 
+# USB-Debugzugang (Netzwerk + Konsole über USB), wenn im Menü "USB-Modus: Debug" gewählt
+$HACK/usbnet.sh boot > /dev/null 2>&1 &
+
 # Weboberfläche auf Port 8081
 pw=$(cfg WEB_PASS)
 if [ -n "$pw" ]; then echo "/:admin:$pw" > $RUN/httpd.conf; else : > $RUN/httpd.conf; fi

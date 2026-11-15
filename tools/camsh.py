@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Befehl per Telnet auf der CT9500 ausführen und Ausgabe zurückgeben.
+Marken werden als START""tag / END""tag gesendet, damit ein Echo (schnelle USB-Verbindung,
+stty -echo greift erst verzögert) nicht als Ausgabe erkannt wird.
 
   tools/camsh.py 'uname -a; cat /proc/mtd'
   echo 'ls /app' | tools/camsh.py -
@@ -42,10 +44,10 @@ def run(cmd, timeout=60, host=HOST):
 
     tag = uuid.uuid4().hex[:8]
     time.sleep(0.3)
-    s.send(f"stty -echo 2>/dev/null; echo START{tag}\n".encode())
+    s.send(f"stty -echo 2>/dev/null; echo START\"\"{tag}\n".encode())
     recv_until(f"START{tag}\r\n".encode(), 10)
     buf = buf.split(f"START{tag}\r\n".encode(), 1)[1]
-    s.send(f"{cmd}\necho \"\"; echo END{tag} $?\n".encode())
+    s.send(f"{cmd}\necho \"\"; echo END\"\"{tag} $?\n".encode())
     recv_until(f"END{tag}".encode(), timeout)
     recv_until(b"\n", 5)
     s.send(b"exit\n")

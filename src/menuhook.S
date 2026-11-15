@@ -10,6 +10,8 @@
 @ Zeile 3 benutzt direkt die Parameterverwaltung von main_app:
 @   HI_PDT_PARAM_Get/SetCommParam(HI_PDT_PARAM_TYPE_USB_MODE = 30, &wert)
 @   wert: 0 = Laden, 1 = UVC (PC-Kamera), 2 = Massenspeicher
+@   Anzeige-Wert 3 = Debug: für main_app "Laden" (kein eigenes Gadget), dazu startet
+@   /app/hack/usbnet.sh das g_multi-Gadget (USB-Netzwerk + Konsole). Merker USB_DEBUG.
 @   SetCommParam setzt das Speicher-Flag -> landet wie jede Einstellung im rawparam.
 @   PDT_UI_COMM_EnableUSB() liest den Wert und ruft HI_USB_SetMode (wie beim Boot).
 
@@ -33,7 +35,7 @@
 
     .text
     .arm
-    .global hook_onshow, hook_keydown, hook_usbwin, rows_btn, rows_lbl, rows_val, rows_btn_rev, rows_lbl_rev, rows_val_rev
+    .global hook_onshow, hook_keydown, hook_usbwin, pwr_usb_pause, pwr_resume, rows_btn, rows_lbl, rows_val, rows_btn_rev, rows_lbl_rev, rows_val_rev
 
 @ ---------------------------------------------------------------- set_label(idx=r0, state=r1)
 set_label:
@@ -82,7 +84,7 @@ refresh_all:
     bl      usb_label
     pop     {r4, pc}
 
-@ ---------------------------------------------------------------- usb_get() -> 0..2
+@ ---------------------------------------------------------------- usb_get() -> 0..3
 usb_get:
     push    {r4, lr}
     sub     sp, sp, #8
@@ -91,9 +93,16 @@ usb_get:
     mov     r0, #PT_USB_MODE
     mov     r1, sp
     bl      GETCOMM
-    ldr     r0, [sp]
-    cmp     r0, #2
-    movhi   r0, #2
+    ldr     r4, [sp]
+    cmp     r4, #2
+    movhi   r4, #2
+    cmp     r4, #0                  @ "Laden": Debug-Merker abfragen
+    bne     1f
+    adr     r0, s_dbg_get
+    bl      SYSTEM
+    cmp     r0, #0                  @ Exit-Code 0 = Debug eingeschaltet
+    moveq   r4, #3
+1:  mov     r0, r4
     add     sp, sp, #8
     pop     {r4, pc}
 
@@ -110,22 +119,38 @@ usb_label:
     bl      PAINT
     pop     {r4, pc}
 
-@ ---------------------------------------------------------------- usb_toggle(): Speicher -> PC-Kamera -> Laden -> Speicher
+@ ---------------------------------------------------------------- usb_toggle(): Speicher -> PC-Kamera -> Laden -> Debug -> Speicher
 usb_toggle:
-    push    {r4, lr}
+    push    {r4, r5, r6, lr}
     sub     sp, sp, #8
     bl      usb_get
-    subs    r4, r0, #1              @ 2 -> 1, 1 -> 0
-    movmi   r4, #2                  @ 0 -> 2
-    str     r4, [sp]
+    mov     r5, r0                  @ bisher
+    adr     r1, usb_next
+    ldr     r4, [r1, r0, lsl #2]    @ neu
+    cmp     r4, #3
+    bne     1f
+    adr     r0, s_dbg_on            @ Laden -> Debug: main_app bleibt auf "Laden"
+    bl      SYSTEM
+    b       2f
+1:  cmp     r5, #3
+    bne     3f
+    adr     r0, s_dbg_off           @ Debug -> Speicher: erst g_multi freigeben
+    bl      SYSTEM
+3:  str     r4, [sp]
     mov     r0, #PT_USB_MODE
     mov     r1, sp
     bl      SETCOMM
     bl      ENABLEUSB
-    mov     r0, r4
+2:  mov     r0, r4
     bl      usb_label
     add     sp, sp, #8
-    pop     {r4, pc}
+    pop     {r4, r5, r6, pc}
+
+usb_next:   .word 3, 0, 1, 2        @ Laden->Debug, PC-Kamera->Laden, Speicher->PC-Kamera, Debug->Speicher
+s_dbg_get:  .asciz "/app/hack/usbnet.sh enabled"
+s_dbg_on:   .asciz "/app/hack/usbnet.sh on >/dev/null 2>&1"
+s_dbg_off:  .asciz "/app/hack/usbnet.sh off >/dev/null 2>&1"
+    .balign 4
 
 @ ---------------------------------------------------------------- hook_usbwin(r0=176, r1=1)
 @ Ersetzt in PDT_UI_COMM_LCDEventProc (Ereignis 0x11700000 = Zustand gewechselt) den Aufruf
@@ -159,6 +184,60 @@ hook_usbwin:
     bl      PAINT
     mov     r0, r4
     pop     {r4, r5, r6, pc}
+
+@ ---------------------------------------------------------------- Bildschirm-Ruhemodus im USB-Modus
+@ PDT_UI_POWERCTRL_PreProcessEvent (0x71db0), Ereignis 0x11700000 (Zustand gewechselt):
+@ Original pausiert für Zustände 9-14 (ausser 12) Bildschirm- UND System-Ruhemodus
+@ (CONTROL PAUSE, Bereich SYSTEM_SCREEN) und setzt beim Rückweg beides fort.
+@ Für UVC (10) / USB-Speicher (11) pausieren wir nur SYSTEM (Kamera bleibt an), der
+@ Bildschirm geht nach der eingestellten Zeit aus; Tastendruck weckt (Original-Logik).
+@ Rückweg: Resume SYSTEM_SCREEN würde am nicht pausierten Bildschirm-Timer abbrechen
+@ (POWERCTRL_ResumeEventProc kehrt beim ersten Fehler zurück) -> dann nur SYSTEM.
+@ Lokale Variablen des Aufrufers (fp gehört ihm, wir werden per "b" angesprungen):
+@   [fp-376] Pause(0)/Resume(1), [fp-372] Bereich SYSTEM(0)/SYSTEM_SCREEN(1), [fp-368] bResetTimer
+    .equ PWR_FLAG,         0x003782fc   @ 1 = Ruhemodus läuft (nicht pausiert)
+    .equ PWR_RET0,         0x00072004   @ "return 0" (nichts zu tun)
+    .equ PWR_RET0B,        0x0007204c
+    .equ PWR_GO,           0x00072080   @ weiter mit HI_POWERCTRL_EventPreProc
+
+pwr_usb_pause:                          @ ersetzt Sprungtabelle Zustand 10 und 11 (Original 0x71ff0)
+    ldr     r3, =PWR_FLAG
+    ldr     r2, [r3]
+    cmp     r2, #0
+    beq     PWR_RET0
+    mov     r2, #0
+    str     r2, [r3]
+    adr     r3, pwr_usb_paused
+    mov     r2, #1
+    str     r2, [r3]
+    mov     r3, #0
+    str     r3, [fp, #-376]         @ PAUSE
+    str     r3, [fp, #-372]         @ nur SYSTEM
+    str     r3, [fp, #-368]
+    b       PWR_GO
+
+pwr_resume:                             @ ersetzt "b 0x72038" (übrige Zustände)
+    ldr     r3, =PWR_FLAG
+    ldr     r2, [r3]
+    cmp     r2, #0
+    bne     PWR_RET0B
+    mov     r2, #1
+    str     r2, [r3]
+    mov     r3, #1
+    str     r3, [fp, #-376]         @ RESUME
+    str     r3, [fp, #-368]         @ Timer neu starten
+    adr     r2, pwr_usb_paused
+    ldr     r3, [r2]
+    cmp     r3, #0
+    moveq   r3, #1                  @ normal: SYSTEM_SCREEN
+    movne   r3, #0                  @ aus USB: nur SYSTEM
+    str     r3, [fp, #-372]
+    mov     r3, #0
+    str     r3, [r2]
+    b       PWR_GO
+
+    .ltorg
+pwr_usb_paused: .word 0
 
 @ ---------------------------------------------------------------- Handler-Tabelle Eintrag 55
 hook_onshow:
@@ -204,7 +283,7 @@ hook_keydown:
 
 cmd_get:    .word s_get0, s_get1, s_get2
 cmd_toggle: .word s_tog0, s_tog1, s_tog2
-usb_str:    .word 476, 475, 474     @ Sprachtexte Laden / PC-Kamera / Speicher
+usb_str:    .word 476, 475, 474, 477  @ Sprachtexte Laden / PC-Kamera / Speicher / Debug
 
 s_get0: .asciz "/app/hack/menu.sh get 0"
 s_get1: .asciz "/app/hack/menu.sh get 1"

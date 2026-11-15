@@ -33,8 +33,12 @@ IMM31 = [(0x87C80, 0xE3A0101F), (0x87CC0, 0xE3A0101F), (0x87D08, 0xE353001F), (0
          (0x87D90, 0xE3A0101F), (0x87DE4, 0xE3A0201F), (0x87E00, 0xE3A0301F), (0x7C2A8, 0xE3A0301F)]
 HANDLER_TABLE = 0x37835C          # VA, 200 Einträge
 HOOKS = {55: (0x7C13C, "hook_onshow"), 56: (0x87BB4, "hook_keydown")}
-# BL-Aufrufe umbiegen: (VA des BL, ursprüngliches Ziel, neues Symbol)
-CALLS = [(0x612B8, 0x74C64, "hook_usbwin")]   # USB-Fenster 176: Bild/Text nach Zustand
+# B/BL umbiegen: (VA der Instruktion, ursprüngliches Ziel, neues Symbol)
+CALLS = [(0x612B8, 0x74C64, "hook_usbwin"),    # bl: USB-Fenster 176, Bild/Text nach Zustand
+         # PDT_UI_POWERCTRL_PreProcessEvent: Bildschirm-Ruhemodus auch im USB-Modus
+         (0x71FD4, 0x71FF0, "pwr_usb_pause"),  # b: Sprungtabelle Zustand 10 (UVC)
+         (0x71FD8, 0x71FF0, "pwr_usb_pause"),  # b: Sprungtabelle Zustand 11 (USB-Speicher)
+         (0x71FCC, 0x72038, "pwr_resume")]     # b: alle anderen Zustände (Resume)
 
 
 def segments(d):
@@ -92,14 +96,14 @@ def patch(d, syms, blob):
             raise SystemExit(f"Handler {idx}: {word(va):#x} statt {orig:#x}")
         setword(va, syms[sym])
         print(f"  Handler {idx}: {orig:#x} -> {sym} ({syms[sym]:#x})")
-    # 5) BL-Aufrufe
+    # 5) B/BL umbiegen (Bedingung/Art bleibt erhalten)
     for va, orig, sym in CALLS:
         w = word(va)
         tgt = (va + 8 + (((w & 0xFFFFFF) ^ 0x800000) - 0x800000) * 4) & 0xFFFFFFFF
-        if w >> 24 != 0xEB or tgt != orig:
-            raise SystemExit(f"BL {va:#x}: {w:#x} (Ziel {tgt:#x}) statt bl {orig:#x}")
-        setword(va, 0xEB000000 | (((syms[sym] - (va + 8)) >> 2) & 0xFFFFFF))
-        print(f"  BL {va:#x}: {orig:#x} -> {sym} ({syms[sym]:#x})")
+        if w >> 24 not in (0xEA, 0xEB) or tgt != orig:
+            raise SystemExit(f"B/BL {va:#x}: {w:#x} (Ziel {tgt:#x}) statt {orig:#x}")
+        setword(va, (w & 0xFF000000) | (((syms[sym] - (va + 8)) >> 2) & 0xFFFFFF))
+        print(f"  {'BL' if w >> 24 == 0xEB else 'B '} {va:#x}: {orig:#x} -> {sym} ({syms[sym]:#x})")
     # 2) neues Segment
     phoff, phentsize, phdrs = segments(d)
     if phdrs[7][0] != 0x6474E552:          # PT_GNU_RELRO

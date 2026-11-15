@@ -93,7 +93,8 @@ MENU_ROWS = {470: ("WLAN-Autostart", "WiFi autostart"),
              # Werte der Zeile USB-Modus (src/menuhook.S usb_str)
              474: ("Speicher", "Storage"),
              475: ("PC-Kamera", "PC camera"),
-             476: ("Laden", "Charge")}
+             476: ("Laden", "Charge"),
+             477: ("Debug", "Debug")}
 
 
 def patch_main_app(img):

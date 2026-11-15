@@ -9,7 +9,7 @@ SD-Karte liegen und der Versionscode in `config` (swverv2) sich vom installierte
 unterscheidet. Jeder Build bekommt daher einen neuen, höheren Code
 (Zähler in out/.buildcounter).
 """
-import os, re, shutil, stat, sys, warnings
+import os, re, shutil, stat, struct, subprocess, sys, warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 sys.path.insert(0, os.path.dirname(__file__))
 from jffs2patch import Jffs2Image
@@ -53,10 +53,15 @@ BINARIES = {   # Ziel im Image -> selbst gebautes ARM-Programm
     "hack/wpa_cli": os.path.join(BUILD, "wpa_supplicant-2.11/wpa_supplicant/wpa_cli"),
     "hack/rtsp2h264": os.path.join(ROOT, "build", "rtsp2h264"),   # aus src/rtsp2h264.c
     "hack/memdump": os.path.join(ROOT, "build", "memdump"),       # aus src/memdump.c (Screenshots)
+    "hack/ctui": os.path.join(ROOT, "build", "ctui"),             # aus src/ctui.c (eigenes Menü)
 }
 # Werden weder von main_app noch von Skripten benutzt (Originale liegen in firmware/fs/)
 REMOVE = ["rtwpriv", "param/bin2flash", "param/ini2bin_board", "sharefs/scene_ini2bin_board",
-          "komod/uvcvideo.ko", "komod/gspca_main.ko", "komod/hi3559v200_nnie.ko"]
+          "komod/uvcvideo.ko", "komod/gspca_main.ko", "komod/hi3559v200_nnie.ko",
+          # Bitmap-Schrift 16 px: Schriften 29/41 nutzen jetzt vector.ttf (tools/higv_theme.py)
+          "bin/res/font/PF16.ubf"]
+# appfs braucht zur Laufzeit freien Platz (u. a. userPara.bin; voll -> Ersteinrichtung erscheint)
+MIN_FREE = 600 * 1024
 
 
 def mod_version(name):
@@ -208,6 +213,17 @@ def patch_pictures(img):
         img.put(dst, open(os.path.join(out, rel), "rb").read(), img.mode(dst) or 0o100750)
     img.put("hack/fonts/LICENSE-tabler-icons.txt", open(os.path.join(MOD, "icons/tabler/LICENSE"), "rb").read(), 0o100640)
     print(f"  ~ bin/res/pic: {len(icons)} neue Icons")
+    # Icons für ctui als Rohdaten (u16 Breite, u16 Höhe, RGBA8)
+    from PIL import Image
+    img.mkdir("hack/ui", 0o40750)
+    n = 0
+    for rel in icons:
+        if rel.endswith("_no_select.png") and "/set-button/" in rel:
+            im = Image.open(os.path.join(out, rel)).convert("RGBA").crop((6, 6, 36, 36))   # 30x30 Kachel
+            name = os.path.basename(rel)[:-len("_no_select.png")]
+            img.put(f"hack/ui/{name}.rgba", struct.pack("<HH", *im.size) + im.tobytes(), 0o100640)
+            n += 1
+    print(f"  ~ hack/ui: {n} Icons für ctui")
 
 
 def patch_appfs(img, name):
@@ -255,7 +271,16 @@ def make_ota(dst, files):
     print(f"OTA-Paket: {tar} ({os.path.getsize(tar)} Bytes)")
 
 
+def compile_tools():
+    """Eigene ARM-Programme übersetzen (statisch, musl)."""
+    tc = os.path.join(ROOT, "toolchain/armv7l-linux-musleabihf-cross/bin/armv7l-linux-musleabihf-gcc")
+    for out, src, extra in (("ctui", "src/ctui.c", ["-lm"]), ("memdump", "src/memdump.c", [])):
+        subprocess.run([tc, "-O2", "-static", "-Wall", "-Wno-unused-function", "-o",
+                        os.path.join(ROOT, "build", out), os.path.join(ROOT, src), *extra], check=True)
+
+
 def main():
+    compile_tools()
     if sys.argv[1:2] == ["stage"]:
         stage_hack(os.path.join(ROOT, "build", "stage", "hack"), sys.argv[2] if len(sys.argv) > 2 else "dev")
         print("Staging: build/stage/hack")
@@ -272,7 +297,10 @@ def main():
         img = Jffs2Image.load(os.path.join(STOCK, "appfs.jffs2"))
         patch_appfs(img, name)
         size = img.save(os.path.join(dst, "appfs.jffs2"), max_size=PART_KB["appfs.jffs2"] * 1024)
-        print(f"appfs.jffs2: {size} Bytes, frei {PART_KB['appfs.jffs2'] * 1024 - size}")
+        free = PART_KB['appfs.jffs2'] * 1024 - size
+        print(f"appfs.jffs2: {size} Bytes, frei {free}")
+        if free < MIN_FREE:
+            raise SystemExit(f"appfs zu voll: nur {free} Bytes frei (mindestens {MIN_FREE})")
 
     code = next_code()
     cfg = open(os.path.join(STOCK, "config")).read()

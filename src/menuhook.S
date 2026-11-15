@@ -288,11 +288,19 @@ hook_long_wifi:
     bne     1f
     mov     r0, #4
     bl      KEYTONE
-    ldr     r0, =quick_set          @ Merker: per Schnellzugriff geöffnet
+    ldr     r0, =s_ui_sysset        @ ctui will die Original-Liste ("System")?
+    bl      UNLINKF
+    cmp     r0, #0
+    beq     3f
+    ldr     r0, =UI_OPEN            @ sonst: eigenes Menü (ctui) öffnen
+    bl      ui_send
+    cmp     r0, #0
+    beq     4f                      @ ctui hat übernommen
+3:  ldr     r0, =quick_set          @ Merker: per Schnellzugriff geöffnet
     mov     r1, #1
     str     r1, [r0]
     bl      SHOWSYSSET
-    add     sp, sp, #16
+4:  add     sp, sp, #16
     pop     {r4, r5}
     b       ONEV_RET0
 1:  add     sp, sp, #16
@@ -356,6 +364,80 @@ hook_clickkey:
 8:  str     r12, [r0]
     str     r3, [r0, #4]
 9:  b       NET_PUBLISH
+
+@ ---------------------------------------------------------------- Eigenes Menü (ctui) - Anbindung
+@ Das Menü-Programm /app/hack/ctui zeichnet selbst (FBIO_REFRESH mit eigener Zeichenfläche).
+@ Solange /dev/ct9500mod/ui_active existiert:
+@   - HiGV darf die Anzeige nicht aktualisieren (Refresh-ioctl in HIGO_ADP_SetLayerSurface
+@     wird übersprungen; HiGV zeichnet weiter in seine eigene Zeichenfläche, ctui zeigt diese
+@     beim Schließen wieder an),
+@   - alle Tasten (HI_GV_SendInputEvent in PDT_UI_COMM_OnEvent) gehen als 4-Byte-Tastencode an
+@     die FIFO /dev/ct9500mod/ui.fifo statt an die Oberfläche.
+@ Öffnen: lang WLAN-Taste (hook_long_wifi) schreibt UI_OPEN in die FIFO.
+    .equ IOCTL,       0x00019e0c        @ ioctl@plt
+    .equ SENDINPUT,   0x001aa368        @ HI_GV_SendInputEvent
+    .equ OPENF,       0x0001a568        @ open@plt
+    .equ WRITEF,      0x0001a154        @ write@plt
+    .equ CLOSEF,      0x0001a6dc        @ close@plt
+    .equ UNLINKF,     0x0001a0b8        @ unlink@plt
+    .equ UI_OPEN,     0x55490001
+
+    .global hook_refresh, hook_input, ui_send
+hook_refresh:                           @ ersetzt "bl ioctl" (FBIO_REFRESH) - r0-r2 = ioctl-Argumente
+    push    {r0-r3, r12, lr}
+    ldr     r0, =s_ui_active
+    mov     r1, #0
+    bl      ACCESS
+    cmp     r0, #0
+    pop     {r0-r3, r12, lr}
+    moveq   r0, #0                  @ ctui aktiv: nicht anzeigen, Erfolg melden
+    bxeq    lr
+    b       IOCTL
+
+hook_input:                             @ ersetzt "bl HI_GV_SendInputEvent" - r0 = Ereignis {Typ, Taste}
+    push    {r0-r3, r4, lr}
+    mov     r4, r0
+    ldr     r0, =s_ui_active
+    mov     r1, #0
+    bl      ACCESS
+    cmp     r0, #0
+    bne     1f
+    ldr     r0, [r4, #4]            @ Tastencode
+    bl      ui_send
+    pop     {r0-r3, r4, lr}
+    mov     r0, #0
+    bx      lr
+1:  pop     {r0-r3, r4, lr}
+    b       SENDINPUT
+
+ui_send:                                @ ui_send(wort): 4 Byte nichtblockierend in die FIFO, r0 = 0 ok
+    push    {r4, r5, lr}
+    sub     sp, sp, #12
+    str     r0, [sp]
+    ldr     r0, =s_ui_fifo
+    ldr     r1, =0x801              @ O_WRONLY | O_NONBLOCK
+    mov     r2, #0
+    bl      OPENF
+    subs    r4, r0, #0
+    movlt   r0, #1
+    blt     2f
+    mov     r1, sp
+    mov     r2, #4
+    bl      WRITEF
+    mov     r5, r0
+    mov     r0, r4
+    bl      CLOSEF
+    cmp     r5, #4
+    moveq   r0, #0
+    movne   r0, #1
+2:  add     sp, sp, #12
+    pop     {r4, r5, pc}
+
+    .ltorg
+s_ui_active: .asciz "/dev/ct9500mod/ui_active"
+s_ui_fifo:   .asciz "/dev/ct9500mod/ui.fifo"
+s_ui_sysset: .asciz "/dev/ct9500mod/ui_sysset"
+    .balign 4
 
 @ ---------------------------------------------------------------- Absturz-Rekorder (src/crash.c)
 @ Signal-Handler-Einsprung: beim Eintritt zeigt sp auf den Signal-Frame des Kernels.

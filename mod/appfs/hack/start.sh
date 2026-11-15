@@ -53,6 +53,9 @@ if [ "$(cfg TELNET 1)" = 1 ]; then
     telnetd -l /bin/sh
 fi
 
+# Eigenes Menü (lang WLAN-Taste); main_app schickt Öffnen/Tasten über /dev/ct9500mod/ui.fifo
+( while true; do $HACK/ctui; log "ctui beendet ($?), Neustart"; rm -f $RUN/ui_active; sleep 2; done ) &
+
 # Merker-Dateien für die Menüzeilen (main_app liest sie per access())
 $HACK/menu.sh sync
 

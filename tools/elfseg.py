@@ -51,7 +51,11 @@ CALLS = [(0x612B8, 0x74C64, "hook_usbwin"),    # bl: USB-Fenster 176, Bild/Text 
          (0x71FCC, 0x72038, "pwr_resume"),     # b: alle anderen Zustände (Resume)
          (0xA7FD0, 0xA0228, "hook_clickkey"),  # bl: sendclickkey.cgi Test-Tasten K<n>/L<n>
          (0x5FA20, 0x5FA8C, "hook_long_wifi"), # b: lang WLAN-Taste = Einstellungen
-         (0x7C0BC, 0x622C8, "hook_set_exit")]  # bl: Einstellungen verlassen ohne Moduswechsel
+         (0x7C0BC, 0x622C8, "hook_set_exit"),  # bl: Einstellungen verlassen ohne Moduswechsel
+         # Eigenes Menü (ctui): HiGV-Refresh unterdrücken, Tasten umleiten
+         (0x2255FC, 0x19E0C, "hook_refresh"), (0x22563C, 0x19E0C, "hook_refresh"),
+         (0x5F9B4, 0x1AA368, "hook_input"), (0x5FAE0, 0x1AA368, "hook_input"),
+         (0x5FB7C, 0x1AA368, "hook_input"), (0x5FC90, 0x1AA368, "hook_input")]
 
 
 def segments(d):

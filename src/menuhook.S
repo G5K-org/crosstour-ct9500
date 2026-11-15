@@ -304,8 +304,9 @@ hook_long_wifi:
     str     r5, [r4, #4]
     mov     r0, #4
     bl      KEYTONE
-    ldr     r0, =s_ui_sysset        @ ctui will die Original-Liste ("System")?
-    bl      UNLINKF
+    ldr     r0, =s_ui_sysset        @ ctui will die Original-Liste ("System")? (onshow löscht ihn)
+    mov     r1, #0
+    bl      ACCESS
     cmp     r0, #0
     beq     3f
     ldr     r0, =UI_OPEN            @ sonst: eigenes Menü (ctui) öffnen
@@ -397,7 +398,8 @@ hook_clickkey:
     .equ WRITEF,      0x0001a154        @ write@plt
     .equ CLOSEF,      0x0001a6dc        @ close@plt
     .equ UNLINKF,     0x0001a0b8        @ unlink@plt
-    .equ UI_OPEN,     0x55490001
+    .equ UI_OPEN,     0x55490001        @ geöffnet über der Startseite (lang WLAN-Taste)
+    .equ UI_OPEN_SYS, 0x55490002        @ geöffnet über der Original-Liste (Moduskreis)
 
     .global hook_refresh, hook_input, ui_send
 hook_refresh:                           @ ersetzt "bl ioctl" (FBIO_REFRESH) - r0-r2 = ioctl-Argumente
@@ -473,6 +475,13 @@ hook_onshow:
     mov     r4, r0
     bl      refresh_all
     bl      crash_install           @ src/crash.c: Absturz-Rekorder (einmalig)
+    ldr     r0, =s_ui_sysset        @ ctui hat "System" gewählt -> Original-Liste zeigen
+    bl      UNLINKF
+    cmp     r0, #0
+    beq     5f
+    ldr     r0, =UI_OPEN_SYS        @ sonst: neues Menü über die Original-Liste legen
+    bl      ui_send
+5:
     @ bl    menucat_show            @ src/menucat.c (deaktiviert: Scroll-Ansicht zeichnet verschobene
     @                               @ Zeilen nicht neu, Original setzt den Fokus zurück; siehe menucat.c)
     mov     r0, r4

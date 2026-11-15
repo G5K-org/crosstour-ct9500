@@ -47,7 +47,8 @@
 #define SYSSET RUN "/ui_sysset"
 #define FONT "/app/bin/res/font/vector.ttf"
 #define ICONS "/app/hack/ui/"
-#define UI_OPEN 0x55490001u
+#define UI_OPEN 0x55490001u       /* über der Startseite (lang WLAN-Taste) */
+#define UI_OPEN_SYS 0x55490002u   /* über der Original-Liste (Moduskreis), darunter offen */
 
 #define KEY_OK 0x1003a
 #define KEY_DOWN 0x1003b
@@ -401,8 +402,13 @@ static void load_page(struct page *p)
     char buf[1024], *parts[MAXROWS], *vals[MAXROWS];
     p->n = 0;
     if (p->kind == P_MAIN) {
+        /* In Wiedergabe/Einstellungen liefert main_app keinen Modus: dann den letzten
+         * bekannten (main_app-Parameter der Aufnahme) bzw. Video verwenden. */
+        char wm[48];
         const char *r = cgi("getcurworkmode.cgi?-act=get");
-        cgi_var(r, "workmode", cur_mode, sizeof cur_mode);
+        cgi_var(r, "workmode", wm, sizeof wm);
+        if (wm[0]) snprintf(cur_mode, sizeof cur_mode, "%s", wm);
+        if (!cur_mode[0]) snprintf(cur_mode, sizeof cur_mode, "NormalVideo");
         struct { const char *l, *i; } m[] = {{"Modus", mode_icon(cur_mode)}, {"Aufnahme", "resolution"},
                                              {"Verbindungen", "wifi"}, {"System", "ldc"}};
         for (int i = 0; i < 4; i++) {
@@ -547,6 +553,7 @@ static void draw(void)
 
 /* ------------------------------------------------------------------ Steuerung */
 static int active;
+static int over_sysset;              /* Original-Liste liegt darunter */
 
 static void push(int kind, const char *title, const char *arg)
 {
@@ -584,6 +591,7 @@ static void ui_open(void)
 
 static void open_system_settings(void)
 {
+    if (over_sysset) { ui_close(); return; }     /* Original-Liste liegt schon darunter */
     ui_close();
     int fd = open(SYSSET, O_CREAT | O_WRONLY, 0644);
     if (fd >= 0) close(fd);
@@ -634,7 +642,11 @@ static void on_key(uint32_t k)
     else if (k == KEY_UP) { p->sel = (p->sel + (p->n ? p->n : 1) - 1) % (p->n ? p->n : 1); draw(); }
     else if (k == KEY_OK) on_ok();
     else if (k == KEY_BACK) {
-        if (depth == 0) ui_close();
+        if (depth == 0) {
+            ui_close();
+            /* Über der Original-Liste: Modus-Taste weiterreichen -> Moduskreis geht weiter */
+            if (over_sysset) cgi("sendclickkey.cgi?-act=set&-type=K0");
+        }
         else { depth--; load_page(&stack[depth]); draw(); }
     } else if (k == KEY_WIFI_LONG) ui_close();
 }
@@ -666,7 +678,9 @@ int main(int argc, char **argv)
         uint32_t m;
         if (read(fd, &m, 4) != 4) continue;
         last = time(0);
-        if (m == UI_OPEN) { if (!active) ui_open(); }
+        if (m == UI_OPEN || m == UI_OPEN_SYS) {
+            if (!active) { over_sysset = (m == UI_OPEN_SYS); ui_open(); }
+        }
         else if (active) on_key(m);
     }
 }

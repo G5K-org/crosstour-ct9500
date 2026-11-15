@@ -88,7 +88,12 @@ MAIN_APP_PATCHES = [
 # Neue Menüzeilen (Einstellungen): Sprachindex -> (Deutsch, Englisch/sonst)
 MENU_ROWS = {470: ("WLAN-Autostart", "WiFi autostart"),
              471: ("Heimnetz", "Home network"),
-             472: ("Telnet", "Telnet")}
+             472: ("Telnet", "Telnet"),
+             473: ("USB-Modus", "USB mode"),
+             # Werte der Zeile USB-Modus (src/menuhook.S usb_str)
+             474: ("Speicher", "Storage"),
+             475: ("PC-Kamera", "PC camera"),
+             476: ("Laden", "Charge")}
 
 
 def patch_main_app(img):
@@ -110,10 +115,12 @@ def patch_main_app(img):
 def patch_higv(img):
     import higv_addrows
     stock = os.path.join(ROOT, "firmware/fs/appfs/bin/higv.bin")
-    new, handles = higv_addrows.add_rows(stock, [(470, higv_addrows.WIFI_ICON), (471, higv_addrows.WIFI_ICON), (472, None)])
-    assert handles == [(1121, 1122, 1123), (1124, 1125, 1126), (1127, 1128, 1129)], handles  # wie in src/menuhook.S
+    new, handles = higv_addrows.add_rows(stock, [(470, higv_addrows.WIFI_ICON), (471, higv_addrows.WIFI_ICON),
+                                                 (472, None), (473, None)])
+    assert handles == [(1121, 1122, 1123), (1124, 1125, 1126), (1127, 1128, 1129),
+                       (1130, 1131, 1132)], handles  # wie in src/menuhook.S
     img.put("bin/higv.bin", new, img.mode("bin/higv.bin"))
-    print(f"  ~ bin/higv.bin: 3 Menüzeilen ({handles})")
+    print(f"  ~ bin/higv.bin: {len(handles)} Menüzeilen ({handles})")
 
 
 def patch_lang(img):

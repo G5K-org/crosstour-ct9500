@@ -7,7 +7,7 @@
 2. Programmkopf 7 (PT_GNU_RELRO, nur Schreibschutz-Hilfe für ld.so) -> PT_LOAD (RWX) für
    das neue Segment am Dateiende.
 3. SYSTEM_SET_button_onkeydown: Verweise auf die 6 Zeilenlisten (31 Einträge) auf die neuen
-   Listen (34 Einträge) umbiegen; Konstanten 31 -> 34 (auch in SYSTEM_SET_onshow).
+   Listen (35 Einträge) umbiegen; Konstanten 31 -> 35 (auch in SYSTEM_SET_onshow).
 4. HiGV-Handlertabelle: Eintrag 55 (onshow) und 56 (button_onkeydown) -> Hooks.
 Jede Änderung prüft vorher den Originalinhalt.
 """
@@ -17,7 +17,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TC = os.path.join(ROOT, "toolchain/armv7l-linux-musleabihf-cross/bin/armv7l-linux-musleabihf-")
 SRC = os.path.join(ROOT, "src/menuhook.S")
 SEG_VA = 0x00420000
-NEW_ROWS = 34
+NEW_ROWS = 35
 
 # VA der Original-Listen -> Symbol der neuen Liste
 LISTS = {0x378700: "rows_btn", 0x37877C: "rows_lbl", 0x3787F8: "rows_val",
@@ -33,6 +33,8 @@ IMM31 = [(0x87C80, 0xE3A0101F), (0x87CC0, 0xE3A0101F), (0x87D08, 0xE353001F), (0
          (0x87D90, 0xE3A0101F), (0x87DE4, 0xE3A0201F), (0x87E00, 0xE3A0301F), (0x7C2A8, 0xE3A0301F)]
 HANDLER_TABLE = 0x37835C          # VA, 200 Einträge
 HOOKS = {55: (0x7C13C, "hook_onshow"), 56: (0x87BB4, "hook_keydown")}
+# BL-Aufrufe umbiegen: (VA des BL, ursprüngliches Ziel, neues Symbol)
+CALLS = [(0x612B8, 0x74C64, "hook_usbwin")]   # USB-Fenster 176: Bild/Text nach Zustand
 
 
 def segments(d):
@@ -90,6 +92,14 @@ def patch(d, syms, blob):
             raise SystemExit(f"Handler {idx}: {word(va):#x} statt {orig:#x}")
         setword(va, syms[sym])
         print(f"  Handler {idx}: {orig:#x} -> {sym} ({syms[sym]:#x})")
+    # 5) BL-Aufrufe
+    for va, orig, sym in CALLS:
+        w = word(va)
+        tgt = (va + 8 + (((w & 0xFFFFFF) ^ 0x800000) - 0x800000) * 4) & 0xFFFFFFFF
+        if w >> 24 != 0xEB or tgt != orig:
+            raise SystemExit(f"BL {va:#x}: {w:#x} (Ziel {tgt:#x}) statt bl {orig:#x}")
+        setword(va, 0xEB000000 | (((syms[sym] - (va + 8)) >> 2) & 0xFFFFFF))
+        print(f"  BL {va:#x}: {orig:#x} -> {sym} ({syms[sym]:#x})")
     # 2) neues Segment
     phoff, phentsize, phdrs = segments(d)
     if phdrs[7][0] != 0x6474E552:          # PT_GNU_RELRO
